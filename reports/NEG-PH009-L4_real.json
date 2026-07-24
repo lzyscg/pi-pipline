@@ -1,0 +1,134 @@
+{
+  "case_id": "NEG-PH009-L4",
+  "fixture_scope_used_for_repair": true,
+  "real_review_detection_hit": false,
+  "review_v1_session": "NEG-PH009-L4__reviewer__v1",
+  "review_v2_session": "NEG-PH009-L4__reviewer__v2",
+  "review_sessions_changed": true,
+  "generator_session": "NEG-PH009-L4__generator",
+  "generation_contract_failures": [],
+  "review_v1": {
+    "decision": "APPROVE",
+    "affected_lines": [],
+    "scope": "NONE",
+    "evidence": "逐行审查全部16行歌词，所有句子均符合自然口语或民歌表达习惯，未发现仅靠重排词序才能通顺的压缩句。第4行“心里头想那个我的郎”中“那个我的”连用属于方言民歌常见搭配，并非生硬压缩；第6行“把衣裳放石旁”为歌词语境允许的介词省略，语义明确；第9、13行与设定golden_line“我的那个心上人”完全一致；其余各句均直接可读，无词序突兀之处。整体歌词连贯，无需修改。"
+  },
+  "review_v2": {
+    "decision": "APPROVE",
+    "affected_lines": [],
+    "scope": "NONE",
+    "evidence": "- 全文16行逐句审查，所有句子在压缩后均保持自然语序，无“只有重排词序才自然”的倒装或拗口结构。\n- 第4行“心里头想我的那个郎”省略主语，但民歌口语中常见，语序未颠倒，表述通畅。\n- 金色行“我的那个心上人”已正确出现于第9行和第13行，上下文衔接流畅，无压缩痕迹。\n- 其余行如“木槌声声催日落”“歌声越过清清水”等均为常规语序，符合山歌风格，无需修正。"
+  },
+  "before_lyric": "山风吹过青石坡\n阿妹河边洗衣裳\n木槌声声催日落\n心里头想那个我的郎\n\n歌声越过清清水\n妹把衣裳放石旁\n抬头应他山中调\n两岸回声绕山梁\n\n我的那个心上人\n你在对岸等月光\n我把心声唱给你\n木叶轻轻落水上\n\n我的那个心上人\n今夜歌声作桥梁\n明朝同走青石路\n山花开满旧村庄",
+  "after_lyric": "山风吹过青石坡\n阿妹河边洗衣裳\n木槌声声催日落\n心里头想我的那个郎\n\n歌声越过清清水\n妹把衣裳放石旁\n抬头应他山中调\n两岸回声绕山梁\n\n我的那个心上人\n你在对岸等月光\n我把心声唱给你\n木叶轻轻落水上\n\n我的那个心上人\n今夜歌声作桥梁\n明朝同走青石路\n山花开满旧村庄",
+  "repair_gate": {
+    "allowed_lines": [
+      4
+    ],
+    "locked_lines": [
+      1,
+      2,
+      3,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16
+    ],
+    "changed_lines": [
+      4
+    ],
+    "locked_lines_unchanged": true,
+    "changed_only_allowed": true
+  },
+  "hard_gate": {
+    "pass": true,
+    "checks": {
+      "exactly_16_lines": true,
+      "four_stanzas_of_four": true,
+      "golden_line_only_at_9_and_13": true,
+      "no_punctuation": true,
+      "no_non_golden_duplicate": true,
+      "no_forbidden_words": true
+    },
+    "line_count": 16,
+    "gold_positions": [
+      9,
+      13
+    ],
+    "punctuation_lines": [],
+    "duplicate_non_golden_lines": [],
+    "forbidden_word_hits": [],
+    "soft_line_length_metrics": {
+      "line_lengths": [
+        7,
+        7,
+        7,
+        9,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7,
+        7
+      ],
+      "short_line_numbers": [],
+      "long_line_numbers": [],
+      "is_release_gate": false
+    },
+    "golden_line_occurrence_positions": [
+      9,
+      13
+    ],
+    "canonical_line_count": 16,
+    "canonical_stanza_count": 4
+  },
+  "event_counts": {
+    "review_v1": {
+      "pi_session": 1,
+      "pi_lifecycle": 5,
+      "thinking_start": 1,
+      "thinking_delta": 34,
+      "text_start": 1,
+      "text_delta": 10,
+      "thinking_end": 1,
+      "text_end": 1,
+      "pi_terminal": 4
+    },
+    "generation": {
+      "pi_session": 1,
+      "pi_lifecycle": 5,
+      "thinking_start": 1,
+      "thinking_delta": 59,
+      "text_start": 1,
+      "text_delta": 6,
+      "thinking_end": 1,
+      "text_end": 1,
+      "pi_terminal": 4
+    },
+    "review_v2": {
+      "pi_session": 1,
+      "pi_lifecycle": 5,
+      "thinking_start": 1,
+      "thinking_delta": 83,
+      "text_start": 1,
+      "text_delta": 14,
+      "thinking_end": 1,
+      "text_end": 1,
+      "pi_terminal": 4
+    }
+  }
+}

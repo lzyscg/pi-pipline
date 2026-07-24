@@ -1,0 +1,17 @@
+{
+  "real_pi": true,
+  "stop_requested": true,
+  "stop_attempt_status": "killed",
+  "stop_return_code": 143,
+  "events_before_stop": [
+    "pi_session",
+    "pi_lifecycle",
+    "pi_lifecycle",
+    "pi_lifecycle",
+    "pi_lifecycle"
+  ],
+  "timeout_attempt_status": "ambiguous",
+  "timeout_return_code": -15,
+  "active_process_tokens_after_probe": [],
+  "process_groups_cleaned": true
+}
