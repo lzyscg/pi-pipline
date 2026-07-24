@@ -35,3 +35,13 @@ plain-language evidence for the decision
 No text may precede the optional version line. Do not use Markdown headings,
 code fences, JSON, extra fields, or repeat control-field names inside EVIDENCE.
 
+For this Lite runtime the displayed version line is required. Copy these
+literal structural lines without translating, changing case, or renaming:
+`# ReviewResult v1`, `DECISION:`, `AFFECTED_LINES:`, `SCOPE:`, and
+`EVIDENCE:`. The leading `#` is the protocol version marker, not an optional
+prose heading.
+
+Never output `ReviewResult:`, `ReviewComment:`, `Score:`, `PassOrNot:`, a
+numeric score, or Chinese aliases for the four field names. `EVIDENCE:` must
+occupy a line by itself and its natural-language evidence begins on the next
+line.

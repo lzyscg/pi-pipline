@@ -52,3 +52,11 @@ Use exactly one blank line between stanzas and no blank line inside a stanza.
 No heading, code fence, line number, JSON, commentary, or trailing text is
 allowed outside these fields.
 
+For this Lite runtime the displayed version line is required. Copy these
+literal structural lines without translating, changing case, or renaming:
+`# GenerationResult v1`, `SUMMARY:`, and `LYRIC:`. The leading `#` is the
+protocol version marker, not an optional prose heading.
+
+`SUMMARY:` and `LYRIC:` must each occupy a line by themselves. Put the summary
+on the following line. Put the first lyric line only after the standalone
+`LYRIC:` line. Insert one empty line after lyric lines 4, 8, and 12.

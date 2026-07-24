@@ -29,3 +29,7 @@ No text may appear before the optional version line. Use exactly one ACTION
 line and one MESSAGE block. Do not use Markdown headings, code fences, extra
 fields, JSON, or another `ACTION:` inside MESSAGE.
 
+For this Lite runtime the displayed version line is required. Copy these three
+literal structural lines without translating, changing case, or renaming:
+`# SupervisorResult v1`, `ACTION: <value>`, and `MESSAGE:`. The leading `#`
+is the protocol version marker, not an optional prose heading.
