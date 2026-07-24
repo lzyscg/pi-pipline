@@ -1,0 +1,14 @@
+{"type":"session","version":3,"id":"lite-event-probe"}
+{"type":"agent_start"}
+{"type":"turn_start"}
+{"type":"message_update","assistantMessageEvent":{"type":"thinking_start","contentIndex":0}}
+{"type":"message_update","assistantMessageEvent":{"type":"thinking_delta","contentIndex":0,"delta":"[redacted probe thinking]"}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_start","contentIndex":1}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_delta","contentIndex":1,"delta":"PROBE_OK"}}
+{"type":"message_update","assistantMessageEvent":{"type":"thinking_end","contentIndex":0,"content":"[redacted probe thinking]"}}
+{"type":"message_update","assistantMessageEvent":{"type":"text_end","contentIndex":1,"content":"PROBE_OK"}}
+{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"PROBE_OK"}],"stopReason":"stop"}}
+{"type":"turn_end","message":{"role":"assistant","content":[{"type":"text","text":"PROBE_OK"}],"stopReason":"stop"},"toolResults":[]}
+{"type":"agent_end","messages":[{"role":"assistant","content":[{"type":"text","text":"PROBE_OK"}],"stopReason":"stop"}],"willRetry":false}
+{"type":"agent_settled"}
+
