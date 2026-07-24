@@ -105,10 +105,9 @@ def allowed_actions(
         return ("SEND_GENERATOR", "ASK_HUMAN")
     if phase == "reviewed":
         if review_decision == "APPROVE" and review_scope == "NONE" and hard_pass:
-            return ("DELIVER", "ASK_HUMAN")
+            return ("DELIVER", "SEND_GENERATOR", "ASK_HUMAN")
         if review_decision == "REPAIR" and review_scope == "LOCAL":
             return ("SEND_GENERATOR", "ASK_HUMAN")
         if review_decision == "REPAIR" and review_scope in {"STRUCTURAL", "INPUT"}:
             return ("ASK_HUMAN",)
     return ("ASK_HUMAN",)
-

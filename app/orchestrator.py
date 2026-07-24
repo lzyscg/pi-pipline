@@ -71,10 +71,20 @@ class CaseRuntime:
     def public_state(self) -> dict:
         return {
             "case_id": self.case_id,
+            "task_title": self.input.get("golden_line") or "未命名歌词任务",
+            "task_style": self.input.get("style") or "未指定风格",
             "status": self.status.value,
             "phase": self.phase,
             "content_version": self.content_version,
             "repair_count": self.repair_count,
+            "turn_count": len(
+                {
+                    event["turn_id"]
+                    for event in self.journal.events
+                    if event["event_type"] == "turn_started" and event.get("turn_id")
+                }
+            ),
+            "rounds": self._round_summaries(),
             "max_repairs": self.max_repairs,
             "current_role": self.current_role,
             "session_ids": self.session_ids,
@@ -84,6 +94,36 @@ class CaseRuntime:
             "final_lyric": self.final_lyric,
             "last_event_id": self.journal.events[-1]["event_id"] if self.journal.events else 0,
         }
+
+    def _round_summaries(self) -> list[dict]:
+        rounds: dict[int, dict] = {}
+        for event in self.journal.events:
+            version = int(event.get("content_version") or 0)
+            payload = event.get("payload") or {}
+            if event["event_type"] == "lyric_version":
+                version = int(payload["version"])
+                hard_pass = bool((payload.get("validation") or {}).get("pass"))
+                rounds[version] = {
+                    "version": version,
+                    "status": "待审核" if hard_pass else "硬门打回",
+                    "hard_pass": hard_pass,
+                    "review_decision": None,
+                }
+            elif event["event_type"] == "review_completed" and version:
+                item = rounds.setdefault(
+                    version,
+                    {
+                        "version": version,
+                        "status": "已审核",
+                        "hard_pass": True,
+                        "review_decision": None,
+                    },
+                )
+                item["review_decision"] = payload.get("decision")
+                item["status"] = "审核通过" if payload.get("decision") == "APPROVE" else "审核打回"
+        if self.status == CaseStatus.DELIVERED and self.content_version in rounds:
+            rounds[self.content_version]["status"] = "已交付"
+        return [rounds[key] for key in sorted(rounds)]
 
 
 class CaseManager:
@@ -230,78 +270,185 @@ class CaseManager:
         try:
             await self._business_event(case, "user", "supervisor", "normal", json.dumps(case.input, ensure_ascii=False))
             sup = await self._supervisor(case, "initial", json.dumps(case.input, ensure_ascii=False))
+            if sup.action == "ASK_HUMAN":
+                await self._wait_human(case, "总控请求人工处理")
+                return
+            if sup.action != "SEND_GENERATOR":
+                await self._wait_human(case, "总控初始路由无效")
+                return
+            generation_instruction = sup.message
+            await self._route(case, "supervisor", "generator", "normal", generation_instruction)
+
             while case.status == CaseStatus.RUNNING:
+                generation = await self._call_and_parse(
+                    case,
+                    "generator",
+                    self._generator_task(case, generation_instruction),
+                )
+                if generation is None:
+                    return
+                assert isinstance(generation, GenerationResult)
+                previous = case.lyrics.get(case.content_version)
+                case.content_version += 1
+                case.lyrics[case.content_version] = generation.lyric
+                lyric_path = case.case_dir / "lyrics" / f"v{case.content_version}.txt"
+                lyric_path.write_text(generation.lyric.text + "\n", encoding="utf-8")
+                lyric_path.chmod(0o600)
+                case.hard_validation = validate_canonical(
+                    generation.lyric,
+                    case.input["golden_line"],
+                    case.input["forbidden_words"],
+                )
+                if previous:
+                    repair = validate_local_repair(previous, generation.lyric, self._repair_lines(case))
+                    case.hard_validation["repair_scope"] = repair
+                    if not repair["locked_lines_unchanged"]:
+                        case.hard_validation["pass"] = False
+                    case.repair_count += 1
+                await case.journal.append(
+                    "lyric_version",
+                    {
+                        "version": case.content_version,
+                        "lyric": generation.lyric.text,
+                        "validation": case.hard_validation,
+                    },
+                    content_version=case.content_version,
+                    status="completed",
+                    durable=True,
+                )
+
+                # Code hard gates run before review. A rejected artifact never
+                # reaches another model; the system returns a scoped ticket
+                # directly to the persistent generator Session.
+                if not case.hard_validation["pass"]:
+                    lines = self._hard_failure_lines(case.hard_validation)
+                    if not lines or case.repair_count >= case.max_repairs:
+                        await self._wait_human(case, "硬门失败且无法安全自动返修或预算耗尽")
+                        return
+                    case.review = ReviewResult(
+                        "REPAIR",
+                        tuple(lines),
+                        "LOCAL",
+                        "代码硬门拒绝当前歌词版本",
+                    )
+                    generation_instruction = self._hard_repair_instruction(case, lines)
+                    await self._route(
+                        case,
+                        "hard_gate",
+                        "generator",
+                        "repair",
+                        generation_instruction,
+                    )
+                    continue
+
+                # A hard-valid generation goes directly to a fresh cold review
+                # Session. The supervisor is not called between these nodes.
+                await self._route(
+                    case,
+                    "generator",
+                    "reviewer",
+                    "review",
+                    f"歌词 v{case.content_version} 已通过代码硬门，请独立冷审当前唯一版本",
+                )
+                review = await self._call_and_parse(
+                    case,
+                    "reviewer",
+                    f"冷审歌词 v{case.content_version}",
+                )
+                if review is None:
+                    return
+                assert isinstance(review, ReviewResult)
+                case.review = review
+                case.review_id = str(uuid.uuid4())
+                await case.journal.append(
+                    "review_completed",
+                    {
+                        "review_id": case.review_id,
+                        **asdict(review),
+                        "session_id": case.session_ids["reviewer"],
+                    },
+                    content_version=case.content_version,
+                    status="completed",
+                    durable=True,
+                )
+
+                if review.decision == "REPAIR":
+                    if review.scope == "INPUT":
+                        await self._wait_human(case, "审核判定输入素材问题，需要人工补充")
+                        return
+                    if case.repair_count >= case.max_repairs:
+                        await self._wait_human(case, "审核打回但自动返修预算已耗尽")
+                        return
+                    if review.scope == "STRUCTURAL":
+                        case.review = ReviewResult(
+                            "REPAIR",
+                            tuple(range(1, 17)),
+                            "STRUCTURAL",
+                            review.evidence,
+                        )
+                    generation_instruction = self._review_repair_instruction(case.review)
+                    await self._route(
+                        case,
+                        "reviewer",
+                        "generator",
+                        "repair",
+                        generation_instruction,
+                    )
+                    continue
+
+                # Only an APPROVE result reaches the supervisor. The supervisor
+                # makes the final business decision, while code retains veto.
+                await self._route(
+                    case,
+                    "reviewer",
+                    "supervisor",
+                    "approval",
+                    f"歌词 v{case.content_version} 冷审通过，提交总控终审",
+                )
+                sup = await self._supervisor(
+                    case,
+                    "reviewed",
+                    json.dumps(asdict(review), ensure_ascii=False),
+                )
                 if sup.action == "ASK_HUMAN":
-                    await self._wait_human(case, "总控请求人工处理")
+                    await self._wait_human(case, "总控终审请求人工处理")
                     return
                 if sup.action == "SEND_GENERATOR":
-                    await self._route(case, "supervisor", "generator", "repair" if case.content_version else "normal", sup.message)
-                    generation = await self._call_and_parse(case, "generator", self._generator_task(case, sup.message))
-                    if generation is None:
+                    if case.repair_count >= case.max_repairs:
+                        await self._wait_human(case, "总控打回但自动返修预算已耗尽")
                         return
-                    assert isinstance(generation, GenerationResult)
-                    previous = case.lyrics.get(case.content_version)
-                    case.content_version += 1
-                    case.lyrics[case.content_version] = generation.lyric
-                    lyric_path = case.case_dir / "lyrics" / f"v{case.content_version}.txt"
-                    lyric_path.write_text(generation.lyric.text + "\n", encoding="utf-8")
-                    lyric_path.chmod(0o600)
-                    case.hard_validation = validate_canonical(
-                        generation.lyric,
-                        case.input["golden_line"],
-                        case.input["forbidden_words"],
+                    case.review = ReviewResult(
+                        "REPAIR",
+                        tuple(range(1, 17)),
+                        "STRUCTURAL",
+                        sup.message,
                     )
-                    if previous:
-                        repair = validate_local_repair(previous, generation.lyric, self._repair_lines(case))
-                        case.hard_validation["repair_scope"] = repair
-                        if not repair["locked_lines_unchanged"]:
-                            case.hard_validation["pass"] = False
-                        case.repair_count += 1
-                    await case.journal.append(
-                        "lyric_version",
-                        {"version": case.content_version, "lyric": generation.lyric.text, "validation": case.hard_validation},
-                        content_version=case.content_version,
-                        status="completed",
-                        durable=True,
+                    generation_instruction = sup.message
+                    await self._route(
+                        case,
+                        "supervisor",
+                        "generator",
+                        "repair",
+                        generation_instruction,
                     )
-                    if not case.hard_validation["pass"]:
-                        lines = self._hard_failure_lines(case.hard_validation)
-                        if not lines or case.repair_count >= case.max_repairs:
-                            await self._wait_human(case, "硬门失败且无法安全自动返修或预算耗尽")
-                            return
-                        case.review = ReviewResult("REPAIR", tuple(lines), "LOCAL", "代码硬校验失败")
-                        sup = await self._supervisor(case, "generated", json.dumps(case.hard_validation, ensure_ascii=False))
-                        continue
-                    sup = await self._supervisor(case, "generated", f"歌词 v{case.content_version} 已通过硬门")
                     continue
-                if sup.action == "SEND_REVIEWER":
-                    await self._route(case, "supervisor", "reviewer", "normal", sup.message)
-                    review = await self._call_and_parse(case, "reviewer", sup.message)
-                    if review is None:
-                        return
-                    assert isinstance(review, ReviewResult)
-                    case.review = review
-                    case.review_id = str(uuid.uuid4())
-                    await case.journal.append(
-                        "review_completed",
-                        {"review_id": case.review_id, **asdict(review), "session_id": case.session_ids["reviewer"]},
-                        content_version=case.content_version,
-                        status="completed",
-                        durable=True,
-                    )
-                    sup = await self._supervisor(case, "reviewed", json.dumps(asdict(review), ensure_ascii=False))
-                    continue
-                if sup.action == "DELIVER":
-                    if not (case.hard_validation and case.hard_validation["pass"] and case.review and case.review.decision == "APPROVE"):
-                        await self._wait_human(case, "代码否决非法交付")
-                        return
-                    case.final_lyric = case.lyrics[case.content_version].text
-                    self._transition_case(case, CaseStatus.DELIVERED)
-                    case.phase = "delivered"
-                    await self._route(case, "supervisor", "delivery", "deliver", case.final_lyric)
-                    await self._state(case)
+                if sup.action != "DELIVER":
+                    await self._wait_human(case, "总控终审路由无效")
                     return
-                await self._wait_human(case, "未知流程状态")
+                if not (
+                    case.hard_validation
+                    and case.hard_validation["pass"]
+                    and case.review
+                    and case.review.decision == "APPROVE"
+                    and case.review.scope == "NONE"
+                ):
+                    await self._wait_human(case, "代码否决非法交付")
+                    return
+                case.final_lyric = case.lyrics[case.content_version].text
+                self._transition_case(case, CaseStatus.DELIVERED)
+                case.phase = "delivered"
+                await self._route(case, "supervisor", "delivery", "deliver", case.final_lyric)
+                await self._state(case)
                 return
         except CasePaused:
             return
@@ -356,6 +503,25 @@ class CaseManager:
             "previous_lyric": previous.text if previous else None,
         }
         return generator_prompt(envelope, task + "\n参考素材：\n" + case.input["reference_lyrics"])
+
+    @staticmethod
+    def _review_repair_instruction(review: ReviewResult) -> str:
+        line_text = ",".join(str(line) for line in review.affected_lines)
+        if review.scope == "STRUCTURAL":
+            return f"审核判定需要结构性返修。问题证据：\n{review.evidence}\n允许重写全部16行。"
+        return (
+            f"审核打回，仅允许修改第 {line_text} 行；其他行逐字冻结。"
+            f"\n问题证据：\n{review.evidence}"
+        )
+
+    @staticmethod
+    def _hard_repair_instruction(case: CaseRuntime, lines: list[int]) -> str:
+        line_text = ",".join(str(line) for line in lines)
+        return (
+            f"代码硬门拒绝歌词 v{case.content_version}。仅允许修改第 {line_text} 行，"
+            "其他行逐字冻结。请修复硬门问题后返回完整歌词。"
+            f"\n硬门结果：\n{json.dumps(case.hard_validation, ensure_ascii=False)}"
+        )
 
     async def _call_and_parse(self, case: CaseRuntime, role: str, task_prompt: str):
         parser = {"supervisor": parse_supervisor_result, "generator": parse_generation_result, "reviewer": parse_review_result}[role]

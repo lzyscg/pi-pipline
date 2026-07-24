@@ -27,6 +27,9 @@ def supervisor_prompt(envelope: dict, business: str) -> str:
 本轮业务输入：
 {business}
 
+当 phase=initial 时，负责整理物料并发送生成。
+当 phase=reviewed 时，表示歌词已通过独立冷审；你只能终审交付、提出结构性重做并发送生成，或请求人工。
+终审选择 SEND_GENERATOR 代表允许重写全部16行；局部问题应由审核 Agent 在此前给出行号并直接打回生成。
 不要在 MESSAGE 中复制完整参考歌词，不得使用反引号或代码围栏。
 只能从 allowed_actions 中选择 ACTION。最终严格套用：
 # SupervisorResult v1

@@ -166,7 +166,7 @@ class StateTests(unittest.TestCase):
                 review_decision="APPROVE",
                 review_scope="NONE",
             ),
-            ("DELIVER", "ASK_HUMAN"),
+            ("DELIVER", "SEND_GENERATOR", "ASK_HUMAN"),
         )
         self.assertEqual(
             allowed_actions(

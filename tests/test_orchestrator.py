@@ -34,6 +34,7 @@ V1 = """山风吹过青石坡
 明朝同走青石路
 山花开满旧村庄"""
 V2 = V1.replace("心里头想那个我的郎", "心里想起我的情郎")
+HARD_BAD = V1.replace(GOLDEN, f"{GOLDEN}呀")
 
 
 def sup(action: str, message: str = "继续") -> str:
@@ -109,7 +110,6 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "supervisor": [
                         sup("SEND_GENERATOR"),
-                        sup("SEND_REVIEWER"),
                         sup("DELIVER"),
                     ],
                     "generator": [gen(V2)],
@@ -122,7 +122,25 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(case.final_lyric, V2)
             self.assertTrue(case.hard_validation["pass"])
             completed = [e for e in case.journal.events if e["event_type"] == "message_completed"]
-            self.assertEqual([e["payload"]["role"] for e in completed], ["supervisor", "generator", "supervisor", "reviewer", "supervisor"])
+            self.assertEqual(
+                [e["payload"]["role"] for e in completed],
+                ["supervisor", "generator", "reviewer", "supervisor"],
+            )
+            routes = [
+                (event["payload"]["source"], event["payload"]["target"])
+                for event in case.journal.events
+                if event["event_type"] == "route"
+            ]
+            self.assertEqual(
+                routes,
+                [
+                    ("user", "supervisor"),
+                    ("supervisor", "generator"),
+                    ("generator", "reviewer"),
+                    ("reviewer", "supervisor"),
+                    ("supervisor", "delivery"),
+                ],
+            )
 
     async def test_neg_ph009_l4_repairs_only_line4_and_cold_reviews(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -131,9 +149,6 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
                 {
                     "supervisor": [
                         sup("SEND_GENERATOR"),
-                        sup("SEND_REVIEWER"),
-                        sup("SEND_GENERATOR", "只修改第4行"),
-                        sup("SEND_REVIEWER"),
                         sup("DELIVER"),
                     ],
                     "generator": [gen(V1), gen(V2)],
@@ -157,6 +172,23 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(len(set(generator_sessions)), 1)
             self.assertNotIn("心里头想那个我的郎", runner.calls["reviewer"][1]["task_prompt"])
             self.assertNotIn("diagnostic", runner.calls["reviewer"][1]["task_prompt"])
+            completed = [
+                event["payload"]["role"]
+                for event in case.journal.events
+                if event["event_type"] == "message_completed"
+            ]
+            self.assertEqual(
+                completed,
+                ["supervisor", "generator", "reviewer", "generator", "reviewer", "supervisor"],
+            )
+            self.assertTrue(
+                any(
+                    event["event_type"] == "route"
+                    and event["payload"]["source"] == "reviewer"
+                    and event["payload"]["target"] == "generator"
+                    for event in case.journal.events
+                )
+            )
 
     async def test_partial_and_illegal_contract_never_route(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -184,7 +216,7 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             known = PiRunResult("known_failed", "", "s", 1, "provider error")
             runner = ScriptedRunner(
                 {
-                    "supervisor": [known, sup("SEND_GENERATOR"), sup("SEND_REVIEWER"), sup("DELIVER")],
+                    "supervisor": [known, sup("SEND_GENERATOR"), sup("DELIVER")],
                     "generator": [gen(V2)],
                     "reviewer": [review("APPROVE", "NONE", "NONE", "通过")],
                 }
@@ -196,6 +228,40 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             first_turn = attempts[0]["turn_id"]
             self.assertEqual(len([e for e in attempts if e["turn_id"] == first_turn]), 2)
             self.assertEqual(runner.calls["supervisor"][0]["session_id"], runner.calls["supervisor"][1]["session_id"])
+
+    async def test_hard_gate_repair_returns_directly_to_generator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = CaseManager(directory)
+            runner = ScriptedRunner(
+                {
+                    "supervisor": [sup("SEND_GENERATOR"), sup("DELIVER")],
+                    "generator": [gen(HARD_BAD), gen(V1)],
+                    "reviewer": [review("APPROVE", "NONE", "NONE", "通过")],
+                }
+            )
+            manager.runner = runner
+            case = await manager.create_case(self.payload())
+            await case.task
+            self.assertEqual(case.status.value, "delivered")
+            completed = [
+                event["payload"]["role"]
+                for event in case.journal.events
+                if event["event_type"] == "message_completed"
+            ]
+            self.assertEqual(
+                completed,
+                ["supervisor", "generator", "generator", "reviewer", "supervisor"],
+            )
+            self.assertEqual(len(runner.calls["supervisor"]), 2)
+            self.assertEqual(len(runner.calls["reviewer"]), 1)
+            self.assertTrue(
+                any(
+                    event["event_type"] == "route"
+                    and event["payload"]["source"] == "hard_gate"
+                    and event["payload"]["target"] == "generator"
+                    for event in case.journal.events
+                )
+            )
 
     async def test_illegal_route_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
