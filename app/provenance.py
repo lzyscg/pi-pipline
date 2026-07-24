@@ -14,14 +14,8 @@ from .config import LiteProfile
 
 
 LITE_ROOT = Path(__file__).resolve().parents[1]
-REPO_ROOT = Path(__file__).resolve().parents[3]
-SUPERVISOR_VALIDATOR = (
-    REPO_ROOT
-    / "shan-song-skill-iteration"
-    / "supervisor_runtime"
-    / "app"
-    / "validation.py"
-)
+REPO_ROOT = LITE_ROOT
+SUPERVISOR_VALIDATOR = LITE_ROOT / "app" / "validator.py"
 OUTPUT_ADAPTER = LITE_ROOT / "app" / "contracts.py"
 
 
@@ -70,7 +64,7 @@ def collect_provenance(profile_path: Path, profile: LiteProfile) -> dict:
     commit = _run("git", "rev-parse", "HEAD")
     dirty = bool(_run("git", "status", "--porcelain"))
     if not SUPERVISOR_VALIDATOR.is_file():
-        raise RuntimeError(f"找不到既有 Validator：{SUPERVISOR_VALIDATOR}")
+        raise RuntimeError(f"找不到 Lite Validator：{SUPERVISOR_VALIDATOR}")
 
     skill_hashes: dict[str, str] = {}
     for role, role_profile in profile.roles.items():

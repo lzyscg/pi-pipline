@@ -1,22 +1,9 @@
-"""Adapt canonical Lite lyrics to the existing deterministic validator."""
+"""Adapt canonical Lite lyrics to the bundled deterministic validator."""
 
 from __future__ import annotations
 
-import importlib.util
-from functools import lru_cache
-
 from .canonical import CanonicalLyric, locked_lines_unchanged
-from .provenance import SUPERVISOR_VALIDATOR
-
-
-@lru_cache(maxsize=1)
-def _validator_module():
-    spec = importlib.util.spec_from_file_location("lite_existing_validation", SUPERVISOR_VALIDATOR)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"无法加载 Validator：{SUPERVISOR_VALIDATOR}")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+from .validator import validate_lyric
 
 
 def validate_canonical(
@@ -24,11 +11,7 @@ def validate_canonical(
     golden_line: str,
     forbidden_words: str = "",
 ) -> dict:
-    result = _validator_module().validate_lyric(
-        lyric.text,
-        golden_line,
-        forbidden_words,
-    )
+    result = validate_lyric(lyric.text, golden_line, forbidden_words)
     occurrence_positions = [
         number for number, line in enumerate(lyric.lines, 1) if golden_line in line
     ]
