@@ -211,7 +211,12 @@ class CaseManager:
                         if event["event_type"] == "turn_started"
                         and not any(
                             later["turn_id"] == event["turn_id"]
-                            and later["event_type"] in {"message_completed", "turn_terminal", "contract_invalid"}
+                            and later["event_type"] in {
+                                "message_completed",
+                                "turn_terminal",
+                                "contract_invalid",
+                                "semantic_output_invalid",
+                            }
                             for later in journal.events
                             if later["event_id"] > event["event_id"]
                         )
@@ -649,10 +654,29 @@ class CaseManager:
                 parsed = parser(result.final_text)
             except ContractError as exc:
                 turn.transition(TurnStatus.FAILED, token=token)
-                await case.journal.append("contract_invalid", {"role": role, "error": str(exc), "raw_final": result.final_text}, turn_id=turn_id, status="failed", durable=True)
-                await self._wait_human(case, f"{role} 输出合同非法")
+                await case.journal.append(
+                    "semantic_output_invalid",
+                    {"role": role, "error": str(exc), "raw_final": result.final_text},
+                    turn_id=turn_id,
+                    status="failed",
+                    durable=True,
+                )
+                await self._wait_human(
+                    case,
+                    f"{role} 业务输出缺少可确定语义",
+                    code="semantic_output_invalid",
+                    details={"role": role, "error": str(exc)},
+                )
                 return None
             turn.transition(TurnStatus.COMPLETED, token=token)
+            await case.journal.append(
+                "business_output_normalized",
+                {"role": role, "adapter": "middleware_semantic_v1", "result": asdict(parsed)},
+                turn_id=turn_id,
+                content_version=case.content_version,
+                status="normalized",
+                durable=True,
+            )
             await case.journal.append("message_completed", {"role": role, "final_output": result.final_text, "session_id": session_id}, turn_id=turn_id, content_version=case.content_version, status="completed", durable=True)
             return parsed
 

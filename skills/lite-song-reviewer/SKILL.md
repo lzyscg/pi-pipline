@@ -21,27 +21,8 @@ changing word order is a blocker. For example,
 `心里头想那个我的郎` must be reported at line 4 as LOCAL because natural
 Chinese requires reordering `那个/我的`.
 
-Return exactly this contract:
-
-```text
-# ReviewResult v1
-DECISION: APPROVE|REPAIR
-AFFECTED_LINES: NONE|4,11
-SCOPE: NONE|LOCAL|STRUCTURAL|INPUT
-EVIDENCE:
-plain-language evidence for the decision
-```
-
-No text may precede the optional version line. Do not use Markdown headings,
-code fences, JSON, extra fields, or repeat control-field names inside EVIDENCE.
-
-For this Lite runtime the displayed version line is required. Copy these
-literal structural lines without translating, changing case, or renaming:
-`# ReviewResult v1`, `DECISION:`, `AFFECTED_LINES:`, `SCOPE:`, and
-`EVIDENCE:`. The leading `#` is the protocol version marker, not an optional
-prose heading.
-
-Never output `ReviewResult:`, `ReviewComment:`, `Score:`, `PassOrNot:`, a
-numeric score, or Chinese aliases for the four field names. `EVIDENCE:` must
-occupy a line by itself and its natural-language evidence begins on the next
-line.
+Clearly state whether the lyric passes or needs repair. For repair, state the
+exact affected line numbers, the scope (`LOCAL`, `STRUCTURAL`, or `INPUT`),
+and concrete evidence. For approval, briefly explain why no release blocker
+remains. Natural Chinese or the English decision terms are both acceptable.
+The middleware owns serialization; concentrate on the review itself.

@@ -86,9 +86,8 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(generation.lyric.lines[3], "阿哥隔岸唱山歌")
         self.assertEqual(review.affected_lines, (4,))
 
-    def test_invalid_contracts_fail_closed(self):
+    def test_semantically_invalid_outputs_fail_closed(self):
         cases = [
-            "说明\nACTION: DELIVER\nMESSAGE:\n完成",
             "# SupervisorResult v1\nACTION: DELIVER\nMESSAGE:\nACTION: SEND_GENERATOR",
             "# ReviewResult v1\nDECISION: APPROVE\nAFFECTED_LINES: 4\n"
             "SCOPE: NONE\nEVIDENCE:\n通过",
@@ -99,7 +98,6 @@ class ContractTests(unittest.TestCase):
         ]
         parsers = [
             parse_supervisor_result,
-            parse_supervisor_result,
             parse_review_result,
             parse_review_result,
             parse_review_result,
@@ -108,11 +106,44 @@ class ContractTests(unittest.TestCase):
             with self.subTest(case=case), self.assertRaises(ContractError):
                 parser(case)
 
-    def test_generation_rejects_markdown_and_extra_text(self):
+    def test_surface_format_variations_are_normalized(self):
+        supervisor = parse_supervisor_result("我已整理好生产物料\nSEND_GENERATOR\n请生成完整歌词")
+        fenced = parse_generation_result(f"这是本轮完整歌词\n```text\n{VALID_LYRIC}\n```")
+        compact = parse_generation_result(VALID_LYRIC.replace("\n\n", "\n"))
+        inline_evidence = parse_review_result(
+            "# ReviewResult v1\nDECISION: REPAIR\nAFFECTED_LINES: 6\n"
+            "SCOPE: LOCAL\nEVIDENCE: 第6行词序不自然"
+        )
+        chinese = parse_review_result("返修 第6行 局部\n第6行压缩过度导致语序不自然")
+        markdown = parse_review_result(
+            "### 审核结果\n- **结论：返修**\n- **问题行：6**\n"
+            "- **范围：局部**\n- **证据：第6行语序不自然**"
+        )
+        approved = parse_review_result("通过")
+        self.assertEqual(supervisor.action, "SEND_GENERATOR")
+        self.assertEqual(fenced.lyric.text, VALID_LYRIC)
+        self.assertEqual(compact.lyric.text, VALID_LYRIC)
+        self.assertEqual(inline_evidence.affected_lines, (6,))
+        self.assertEqual(chinese.scope, "LOCAL")
+        self.assertEqual(markdown.affected_lines, (6,))
+        self.assertEqual(approved.decision, "APPROVE")
+
+    def test_json_business_results_are_normalized(self):
+        supervisor = parse_supervisor_result(
+            '{"action":"DELIVER","message":"审核通过，可以交付"}'
+        )
+        review = parse_review_result(
+            '{"结论":"返修","问题行":[4,11],"范围":"局部","证据":"两行语序不自然"}'
+        )
+        self.assertEqual(supervisor.action, "DELIVER")
+        self.assertEqual(review.affected_lines, (4, 11))
+
+    def test_generation_rejects_ambiguous_or_missing_lyric(self):
+        alternate = VALID_LYRIC.replace("阿哥隔岸唱山歌", "阿哥隔岸把歌唱")
         with self.assertRaises(ContractError):
-            parse_generation_result(f"SUMMARY:\n完成\nLYRIC:\n```text\n{VALID_LYRIC}\n```")
+            parse_generation_result(f"{VALID_LYRIC}\n\n{alternate}")
         with self.assertRaises(ContractError):
-            parse_generation_result(f"SUMMARY:\n完成\nLYRIC:\n{VALID_LYRIC}\n尾部说明")
+            parse_generation_result("已完成歌词，请查收")
 
 
 class ValidationTests(unittest.TestCase):

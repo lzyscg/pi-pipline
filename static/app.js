@@ -280,6 +280,7 @@ function buildTurns(events) {
           version: event.content_version || 0,
           thinking: "",
           stream: "",
+          normalized: null,
           inbound: null,
           outbound: null,
           firstEventId: event.event_id,
@@ -310,8 +311,15 @@ function buildTurns(events) {
       turn.finalOutput = payload.final_output;
       turn.sessionId = payload.session_id || turn.sessionId;
       turn.status = "completed";
+    } else if (event.event_type === "business_output_normalized") {
+      turn.normalized = payload.result;
+      turn.adapter = payload.adapter;
+    } else if (event.event_type === "semantic_output_invalid") {
+      turn.error = payload.error || "业务输出语义不完整";
+      turn.partial = payload.raw_final;
+      turn.status = "failed";
     } else if (event.event_type === "contract_invalid") {
-      turn.error = payload.error || "输出合同非法";
+      turn.error = payload.error || "历史输出格式无法识别";
       turn.partial = payload.raw_final;
       turn.status = "failed";
     } else if (event.event_type === "turn_terminal") {
@@ -389,6 +397,9 @@ function renderTurnCard(turn, index) {
   const error = turn.error
     ? `<div class="turn-section"><div class="section-label"><span>未流转原因</span></div><pre>${esc(turn.error)}</pre></div>`
     : "";
+  const normalized = turn.normalized
+    ? `<div class="turn-section"><details><summary>Middleware 归一化业务结果 · ${esc(turn.adapter || "")}</summary><pre>${esc(JSON.stringify(turn.normalized, null, 2))}</pre></details></div>`
+    : "";
   return `<article class="turn-card ${esc(turn.status)}" id="turn-${esc(turn.id)}">
     <header class="turn-head">
       <span class="turn-number">${String(index + 1).padStart(2, "0")}</span>
@@ -419,6 +430,7 @@ function renderTurnCard(turn, index) {
         <div class="section-label"><span>本轮最终产出</span><span>${esc(turn.skill || "")}</span></div>
         <pre>${esc(output)}</pre>
       </div>
+      ${normalized}
       ${error}
       ${outbound}
     </div>

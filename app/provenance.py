@@ -22,6 +22,7 @@ SUPERVISOR_VALIDATOR = (
     / "app"
     / "validation.py"
 )
+OUTPUT_ADAPTER = LITE_ROOT / "app" / "contracts.py"
 
 
 def sha256_file(path: Path) -> str:
@@ -76,14 +77,6 @@ def collect_provenance(profile_path: Path, profile: LiteProfile) -> dict:
         skill_file = LITE_ROOT / "skills" / role_profile.skill / "SKILL.md"
         if not skill_file.is_file():
             raise RuntimeError(f"找不到 {role} Lite Skill：{skill_file}")
-        content = skill_file.read_text(encoding="utf-8")
-        expected_contract = {
-            "supervisor": "SupervisorResult v1",
-            "generator": "GenerationResult v1",
-            "reviewer": "ReviewResult v1",
-        }[role]
-        if expected_contract not in content:
-            raise RuntimeError(f"{role} Skill 未声明 {expected_contract}")
         skill_hashes[role] = sha256_file(skill_file)
 
     return {
@@ -96,6 +89,8 @@ def collect_provenance(profile_path: Path, profile: LiteProfile) -> dict:
         "profile_sha256": sha256_file(profile_path),
         "validator_path": str(SUPERVISOR_VALIDATOR),
         "validator_sha256": sha256_file(SUPERVISOR_VALIDATOR),
+        "output_adapter": "middleware_semantic_v1",
+        "output_adapter_sha256": sha256_file(OUTPUT_ADAPTER),
         "skill_sha256": skill_hashes,
     }
 
@@ -106,4 +101,3 @@ def write_provenance(path: Path, provenance: dict) -> None:
         encoding="utf-8",
     )
     path.chmod(0o600)
-

@@ -23,20 +23,7 @@ At `phase=initial`, choose `SEND_GENERATOR` or `ASK_HUMAN`. At
 `SEND_GENERATOR` at final review means a structural rework of all 16 lines;
 localized repairs are owned by the reviewer before this point.
 
-Return exactly this contract:
-
-```text
-# SupervisorResult v1
-ACTION: SEND_GENERATOR|SEND_REVIEWER|DELIVER|ASK_HUMAN
-MESSAGE:
-plain-language task, repair instruction, or delivery note
-```
-
-No text may appear before the optional version line. Use exactly one ACTION
-line and one MESSAGE block. Do not use Markdown headings, code fences, extra
-fields, JSON, or another `ACTION:` inside MESSAGE.
-
-For this Lite runtime the displayed version line is required. Copy these three
-literal structural lines without translating, changing case, or renaming:
-`# SupervisorResult v1`, `ACTION: <value>`, and `MESSAGE:`. The leading `#`
-is the protocol version marker, not an optional prose heading.
+State the selected action token clearly on its own line and use it only once.
+Explain the task, repair instruction, or delivery reason in natural language.
+The middleware owns serialization, so do not spend attention on a response
+schema. Never place a second action token in examples or quoted text.

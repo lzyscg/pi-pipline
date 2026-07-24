@@ -104,17 +104,17 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             "max_repairs": 3,
         }
 
-    async def test_direct_real_flow_contract_delivers(self):
+    async def test_direct_natural_business_outputs_deliver(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = CaseManager(directory)
             manager.runner = ScriptedRunner(
                 {
                     "supervisor": [
-                        sup("SEND_GENERATOR"),
-                        sup("DELIVER"),
+                        "已整理好本次物料\nSEND_GENERATOR\n请创作完整歌词",
+                        "独立冷审已通过\nDELIVER\n可以交付",
                     ],
-                    "generator": [gen(V2)],
-                    "reviewer": [review("APPROVE", "NONE", "NONE", "无阻断问题")],
+                    "generator": [V2],
+                    "reviewer": ["通过\n16行均无发布阻断问题"],
                 }
             )
             case = await manager.create_case(self.payload())
@@ -127,6 +127,11 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
                 [e["payload"]["role"] for e in completed],
                 ["supervisor", "generator", "reviewer", "supervisor"],
             )
+            normalized = [
+                e for e in case.journal.events
+                if e["event_type"] == "business_output_normalized"
+            ]
+            self.assertEqual(len(normalized), 4)
             routes = [
                 (event["payload"]["source"], event["payload"]["target"])
                 for event in case.journal.events
@@ -154,7 +159,8 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
                     ],
                     "generator": [gen(V1), gen(V2)],
                     "reviewer": [
-                        review("REPAIR", "4", "LOCAL", "第4行词序不自然"),
+                        "# ReviewResult v1\nDECISION: REPAIR\nAFFECTED_LINES: 4\n"
+                        "SCOPE: LOCAL\nEVIDENCE: 第4行词序不自然",
                         review("APPROVE", "NONE", "NONE", "问题已关闭"),
                     ],
                 }
@@ -210,6 +216,33 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
                 if e["event_type"] == "route" and e["payload"]["target"] == "reviewer"
             ]
             self.assertEqual(reviewer_routes, [])
+
+    async def test_missing_business_semantics_never_route(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = CaseManager(directory)
+            manager.runner = ScriptedRunner(
+                {
+                    "supervisor": [sup("SEND_GENERATOR")],
+                    "generator": ["我已经完成了，请查看"],
+                }
+            )
+            case = await manager.create_case(self.payload())
+            await case.task
+            self.assertEqual(case.status.value, "waiting_human")
+            invalid = [
+                event
+                for event in case.journal.events
+                if event["event_type"] == "semantic_output_invalid"
+            ]
+            self.assertEqual(len(invalid), 1)
+            self.assertEqual(invalid[0]["payload"]["role"], "generator")
+            self.assertFalse(
+                any(
+                    event["event_type"] == "route"
+                    and event["payload"]["target"] == "reviewer"
+                    for event in case.journal.events
+                )
+            )
 
     async def test_known_failure_retries_once_with_same_turn_and_session(self):
         with tempfile.TemporaryDirectory() as directory:
