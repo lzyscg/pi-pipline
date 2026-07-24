@@ -35,6 +35,7 @@ V1 = """山风吹过青石坡
 山花开满旧村庄"""
 V2 = V1.replace("心里头想那个我的郎", "心里想起我的情郎")
 HARD_BAD = V1.replace(GOLDEN, f"{GOLDEN}呀")
+DUPLICATE_BAD = V2.replace("山花开满旧村庄", "木槌声声催日落")
 
 
 def sup(action: str, message: str = "继续") -> str:
@@ -263,6 +264,31 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
                 )
             )
 
+    async def test_duplicate_hard_gate_repairs_only_later_occurrence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = CaseManager(directory)
+            runner = ScriptedRunner(
+                {
+                    "supervisor": [sup("SEND_GENERATOR"), sup("DELIVER")],
+                    "generator": [gen(DUPLICATE_BAD), gen(V2)],
+                    "reviewer": [review("APPROVE", "NONE", "NONE", "通过")],
+                }
+            )
+            manager.runner = runner
+            case = await manager.create_case(self.payload())
+            await case.task
+            self.assertEqual(case.status.value, "delivered")
+            repair_route = next(
+                event
+                for event in case.journal.events
+                if event["event_type"] == "route"
+                and event["payload"]["source"] == "hard_gate"
+            )
+            self.assertIn("仅允许修改第 16 行", repair_route["payload"]["message"])
+            self.assertEqual(case.hard_validation["repair_scope"]["allowed_lines"], [16])
+            self.assertEqual(case.hard_validation["repair_scope"]["changed_lines"], [16])
+            self.assertTrue(case.hard_validation["repair_scope"]["locked_lines_unchanged"])
+
     async def test_illegal_route_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = CaseManager(directory)
@@ -357,6 +383,33 @@ class BindTests(unittest.TestCase):
             "duplicate_non_golden_lines": [],
         }
         self.assertEqual(CaseManager._hard_failure_lines(validation), [9, 13])
+
+    def test_duplicate_failure_preserves_first_and_repairs_later_occurrences(self):
+        validation = {
+            "checks": {"golden_line_only_at_9_and_13": False},
+            "gold_positions": [7],
+            "golden_line_occurrence_positions": [7],
+            "punctuation_lines": [],
+            "forbidden_word_hits": [],
+            "duplicate_non_golden_lines": ["重复句"],
+            "duplicate_non_golden_occurrences": [
+                {"text": "重复句", "positions": [3, 15]},
+            ],
+        }
+        self.assertEqual(
+            CaseManager._hard_failure_lines(validation),
+            [7, 9, 13, 15],
+        )
+
+    def test_duplicate_failure_without_positions_fails_closed(self):
+        validation = {
+            "checks": {"golden_line_only_at_9_and_13": True},
+            "punctuation_lines": [4],
+            "forbidden_word_hits": [],
+            "duplicate_non_golden_lines": ["重复句"],
+            "duplicate_non_golden_occurrences": [],
+        }
+        self.assertEqual(CaseManager._hard_failure_lines(validation), [])
 
 
 if __name__ == "__main__":

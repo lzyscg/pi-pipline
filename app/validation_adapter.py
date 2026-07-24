@@ -39,6 +39,17 @@ def validate_canonical(
     )
     result["checks"]["golden_line_only_at_9_and_13"] = occurrence_gate
     result["golden_line_occurrence_positions"] = occurrence_positions
+    result["duplicate_non_golden_occurrences"] = [
+        {
+            "text": duplicate,
+            "positions": [
+                number
+                for number, line in enumerate(lyric.lines, 1)
+                if line == duplicate
+            ],
+        }
+        for duplicate in result.get("duplicate_non_golden_lines", [])
+    ]
     result["pass"] = all(result["checks"].values())
     result["canonical_line_count"] = len(lyric.lines)
     result["canonical_stanza_count"] = len(lyric.stanzas)

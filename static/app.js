@@ -190,7 +190,54 @@ function renderState(info) {
     element.querySelector(".agent-state").textContent = active ? "运行中" : "等待";
   });
   state.lyrics = info.lyrics || state.lyrics;
+  renderBlocking(info);
   renderArtifacts(info);
+}
+
+function renderBlocking(info) {
+  const banner = $("#blockingBanner");
+  const blocking = info.status === "waiting_human" ? info.blocking : null;
+  banner.hidden = !blocking;
+  $("#continueForm").classList.toggle("available", Boolean(blocking));
+  $("#continueForm").querySelectorAll("input, select, button").forEach(element => {
+    element.disabled = !blocking;
+  });
+  if (!blocking) return;
+  const failedChecks = blocking.details?.failed_checks?.length
+    ? `未通过：${blocking.details.failed_checks.map(checkName).join("、")}`
+    : failedChecksFromState(info);
+  const budget = Number.isInteger(blocking.details?.repair_count)
+    ? `返修 ${blocking.details.repair_count}/${blocking.details.max_repairs}`
+    : `返修 ${info.repair_count}/${info.max_repairs}`;
+  $("#blockingReason").textContent = blocking.reason;
+  $("#blockingDetails").textContent = [failedChecks, budget, blockingNextStep(blocking.code)]
+    .filter(Boolean)
+    .join(" · ");
+  $("#blockingCode").textContent = blocking.code;
+}
+
+function failedChecksFromState(info) {
+  const failed = Object.entries(info.hard_validation?.checks || {})
+    .filter(([, passed]) => !passed)
+    .map(([name]) => checkName(name));
+  return failed.length ? `未通过：${failed.join("、")}` : "";
+}
+
+function checkName(name) {
+  return {
+    exactly_16_lines: "必须为16行",
+    four_stanzas_of_four: "必须为4段×4行",
+    golden_line_only_at_9_and_13: "金句位置",
+    no_punctuation: "不得含标点",
+    no_non_golden_duplicate: "非金句不得重复",
+    no_forbidden_words: "不得含禁用词",
+  }[name] || name;
+}
+
+function blockingNextStep(code) {
+  if (code === "repair_budget_exhausted") return "下一步：人工评估后结束或补充处理指令";
+  if (code === "hard_gate_no_safe_scope") return "下一步：人工确认问题行后再继续";
+  return "下一步：检查原因并决定是否人工继续";
 }
 
 function countTurns() {
@@ -285,8 +332,26 @@ function renderTimeline() {
     $("#links").innerHTML = $("#links defs")?.outerHTML || "";
     return;
   }
-  timeline.innerHTML = turns.map((turn, index) => renderTurnRow(turn, index)).join("");
+  const blocker = state.caseInfo?.status === "waiting_human"
+    ? renderBlockerRow(state.caseInfo.blocking, turns.length)
+    : "";
+  timeline.innerHTML = turns.map((turn, index) => renderTurnRow(turn, index)).join("") + blocker;
   requestAnimationFrame(() => drawTurnLinks(turns));
+}
+
+function renderBlockerRow(blocking, turnCount) {
+  if (!blocking) return "";
+  return `<div class="blocker-row">
+    <article class="flow-blocker-card">
+      <span class="turn-number">${String(turnCount + 1).padStart(2, "0")}</span>
+      <div>
+        <p class="eyebrow">CODE GATE · 已安全暂停</p>
+        <strong>${esc(blocking.reason)}</strong>
+        <span>后续 Agent 未被调用，当前产物不会继续流转</span>
+      </div>
+      <b>${esc(blocking.code)}</b>
+    </article>
+  </div>`;
 }
 
 function renderTurnRow(turn, index) {

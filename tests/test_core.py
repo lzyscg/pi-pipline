@@ -140,6 +140,19 @@ class ValidationTests(unittest.TestCase):
         self.assertFalse(result["pass"])
         self.assertEqual(result["golden_line_occurrence_positions"], [4, 9, 13])
 
+    def test_duplicate_gate_surfaces_exact_occurrence_positions(self):
+        duplicate = "木槌声声催日落"
+        lyric = canonicalize_lyric(
+            VALID_LYRIC.replace("山花开满旧村庄", duplicate)
+        )
+        result = validate_canonical(lyric, GOLDEN)
+        self.assertFalse(result["pass"])
+        self.assertEqual(result["duplicate_non_golden_lines"], [duplicate])
+        self.assertEqual(
+            result["duplicate_non_golden_occurrences"],
+            [{"text": duplicate, "positions": [3, 16]}],
+        )
+
     def test_frozen_lines_are_code_owned(self):
         before = canonicalize_lyric(VALID_LYRIC)
         good = canonicalize_lyric(VALID_LYRIC.replace("阿哥隔岸唱山歌", "阿哥隔岸把歌唱"))

@@ -90,9 +90,45 @@ class CaseRuntime:
             "session_ids": self.session_ids,
             "hard_validation": self.hard_validation,
             "review": asdict(self.review) if self.review else None,
+            "blocking": self._blocking_state(),
             "lyrics": {str(k): v.text for k, v in self.lyrics.items()},
             "final_lyric": self.final_lyric,
             "last_event_id": self.journal.events[-1]["event_id"] if self.journal.events else 0,
+        }
+
+    def _blocking_state(self) -> dict | None:
+        if self.status != CaseStatus.WAITING_HUMAN:
+            return None
+        event = next(
+            (
+                item
+                for item in reversed(self.journal.events)
+                if item["event_type"] == "waiting_human"
+            ),
+            None,
+        )
+        if event is None:
+            return {
+                "code": "waiting_human",
+                "reason": "任务正在等待人工处理",
+                "details": {},
+                "event_id": None,
+            }
+        payload = event.get("payload") or {}
+        reason = payload.get("reason") or "任务正在等待人工处理"
+        code = payload.get("code") or "waiting_human"
+        if reason == "硬门失败且无法安全自动返修或预算耗尽":
+            if self.repair_count >= self.max_repairs:
+                code = "repair_budget_exhausted"
+                reason = "代码硬门仍未通过，自动返修预算已耗尽"
+            else:
+                code = "hard_gate_no_safe_scope"
+                reason = "代码硬门未通过，旧校验记录没有提供可安全自动返修的行号"
+        return {
+            "code": code,
+            "reason": reason,
+            "details": payload.get("details") or {},
+            "event_id": event.get("event_id"),
         }
 
     def _round_summaries(self) -> list[dict]:
@@ -159,6 +195,8 @@ class CaseManager:
                     repair_count=state.get("repair_count", 0),
                     final_lyric=state.get("final_lyric"),
                     session_ids=state.get("session_ids", {}),
+                    hard_validation=state.get("hard_validation"),
+                    review=self._restore_review(state.get("review")),
                 )
                 for path in (case_dir / "lyrics").glob("v*.txt"):
                     from .canonical import canonicalize_lyric
@@ -187,6 +225,17 @@ class CaseManager:
                 self.cases[case.case_id] = case
             except Exception:
                 continue
+
+    @staticmethod
+    def _restore_review(raw: dict | None) -> ReviewResult | None:
+        if not raw:
+            return None
+        return ReviewResult(
+            decision=raw["decision"],
+            affected_lines=tuple(raw.get("affected_lines") or ()),
+            scope=raw["scope"],
+            evidence=raw["evidence"],
+        )
 
     async def recover_orphans(self) -> None:
         for case in self.cases.values():
@@ -322,8 +371,31 @@ class CaseManager:
                 # directly to the persistent generator Session.
                 if not case.hard_validation["pass"]:
                     lines = self._hard_failure_lines(case.hard_validation)
-                    if not lines or case.repair_count >= case.max_repairs:
-                        await self._wait_human(case, "硬门失败且无法安全自动返修或预算耗尽")
+                    failed_checks = [
+                        name
+                        for name, passed in case.hard_validation.get("checks", {}).items()
+                        if not passed
+                    ]
+                    details = {
+                        "failed_checks": failed_checks,
+                        "repair_count": case.repair_count,
+                        "max_repairs": case.max_repairs,
+                    }
+                    if case.repair_count >= case.max_repairs:
+                        await self._wait_human(
+                            case,
+                            "代码硬门仍未通过，自动返修预算已耗尽",
+                            code="repair_budget_exhausted",
+                            details=details,
+                        )
+                        return
+                    if not lines:
+                        await self._wait_human(
+                            case,
+                            "代码硬门未通过，但无法从校验结果确定安全的定点返修行",
+                            code="hard_gate_no_safe_scope",
+                            details=details,
+                        )
                         return
                     case.review = ReviewResult(
                         "REPAIR",
@@ -611,11 +683,23 @@ class CaseManager:
     async def _business_event(self, case: CaseRuntime, source: str, target: str, kind: str, message: str) -> None:
         await self._route(case, source, target, kind, message)
 
-    async def _wait_human(self, case: CaseRuntime, reason: str) -> None:
+    async def _wait_human(
+        self,
+        case: CaseRuntime,
+        reason: str,
+        *,
+        code: str = "human_required",
+        details: dict | None = None,
+    ) -> None:
         if case.status == CaseStatus.RUNNING:
             self._transition_case(case, CaseStatus.WAITING_HUMAN)
             case.phase = "waiting_human"
-            await case.journal.append("waiting_human", {"reason": reason}, status="waiting_human", durable=True)
+            await case.journal.append(
+                "waiting_human",
+                {"code": code, "reason": reason, "details": details or {}},
+                status="waiting_human",
+                durable=True,
+            )
             await self._state(case)
 
     def _repair_lines(self, case: CaseRuntime) -> list[int]:
@@ -630,10 +714,25 @@ class CaseManager:
             lines.update(validation.get("gold_positions", []))
             lines.update(validation.get("golden_line_occurrence_positions", []))
         duplicates = set(validation.get("duplicate_non_golden_lines", []))
-        # Duplicate values are surfaced without positions by the legacy gate;
-        # no safe local scope can be inferred from them.
-        if duplicates and not lines:
-            return []
+        duplicate_occurrences = validation.get("duplicate_non_golden_occurrences", [])
+        if duplicates:
+            mapped = {
+                item.get("text"): item.get("positions")
+                for item in duplicate_occurrences
+                if isinstance(item, dict)
+            }
+            # Preserve the first occurrence and repair only later copies. If
+            # the adapter cannot prove every duplicate position, fail closed.
+            for duplicate in duplicates:
+                positions = mapped.get(duplicate)
+                if (
+                    not isinstance(positions, list)
+                    or len(positions) < 2
+                    or positions != sorted(set(positions))
+                    or any(not isinstance(number, int) or not 1 <= number <= 16 for number in positions)
+                ):
+                    return []
+                lines.update(positions[1:])
         return sorted(lines)
 
     async def stop_current(self, case_id: str) -> bool:
