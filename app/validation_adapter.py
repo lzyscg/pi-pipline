@@ -29,6 +29,17 @@ def validate_canonical(
         golden_line,
         forbidden_words,
     )
+    occurrence_positions = [
+        number for number, line in enumerate(lyric.lines, 1) if golden_line in line
+    ]
+    occurrence_gate = (
+        occurrence_positions == [9, 13]
+        and lyric.lines[8] == golden_line
+        and lyric.lines[12] == golden_line
+    )
+    result["checks"]["golden_line_only_at_9_and_13"] = occurrence_gate
+    result["golden_line_occurrence_positions"] = occurrence_positions
+    result["pass"] = all(result["checks"].values())
     result["canonical_line_count"] = len(lyric.lines)
     result["canonical_stanza_count"] = len(lyric.stanzas)
     return result
@@ -51,4 +62,3 @@ def validate_local_repair(
         "locked_lines_unchanged": locked_lines_unchanged(before, after, allowed_lines),
         "changed_only_allowed": set(changed).issubset(set(allowed_lines)),
     }
-

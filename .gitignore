@@ -4,4 +4,6 @@ __pycache__/
 .venv/
 runtime/
 *.log
-
+.playwright-cli/
+output/playwright/pi-swimlane-empty.png
+output/playwright/pi-swimlane-ph009-delivered.png

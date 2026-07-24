@@ -32,10 +32,16 @@ class CaseInput(BaseModel):
     max_repairs: int = 3
 
 
+class ContinueInput(BaseModel):
+    target: str
+    instruction: str = Field(min_length=1)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     validate_bind_host(os.environ.get("PI_SWIMLANE_HOST", "127.0.0.1"))
     app.state.manager = CaseManager(os.environ.get("PI_SWIMLANE_DATA_DIR"))
+    await app.state.manager.recover_orphans()
     yield
 
 
@@ -143,6 +149,17 @@ async def cancel(case_id: str, request: Request):
     return {"cancelled": True}
 
 
+@app.post("/api/cases/{case_id}/continue")
+async def continue_case(case_id: str, payload: ContinueInput, request: Request):
+    try:
+        await manager(request).manual_continue(case_id, payload.target, payload.instruction)
+    except KeyError as exc:
+        raise HTTPException(404, "Case 不存在") from exc
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"continued": True}
+
+
 @app.get("/api/ph-cases")
 async def ph_cases():
     root = REPO_ROOT / "shan-song-skill-iteration" / "experiments" / "2026-07-16_v1.0.0_substyle_showcase" / "inputs"
@@ -158,4 +175,3 @@ async def ph_cases():
             }
         )
     return result
-

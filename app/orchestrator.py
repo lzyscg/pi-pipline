@@ -26,7 +26,14 @@ from .pi_stream import PiRunResult, PiStreamRunner
 from .prompts import SYSTEM_PROMPTS, generator_prompt, reviewer_prompt, supervisor_prompt
 from .provenance import LITE_ROOT, collect_provenance, ensure_private_runtime_dir, write_provenance
 from .redaction import redact_text
-from .state import CaseStatus, TurnState, TurnStatus, allowed_actions
+from .state import (
+    CASE_TRANSITIONS,
+    CaseStatus,
+    TurnState,
+    TurnStatus,
+    allowed_actions,
+    require_transition,
+)
 from .validation_adapter import validate_canonical, validate_local_repair
 
 
@@ -55,6 +62,7 @@ class CaseRuntime:
     active_token: str | None = None
     current_role: str | None = None
     final_lyric: str | None = None
+    recovery_notice: dict | None = None
     task: asyncio.Task | None = None
     role_locks: dict[str, asyncio.Lock] = field(
         default_factory=lambda: {role: asyncio.Lock() for role in ("supervisor", "generator", "reviewer")}
@@ -119,9 +127,45 @@ class CaseManager:
                 if case.status == CaseStatus.RUNNING:
                     case.status = CaseStatus.WAITING_HUMAN
                     case.phase = "orphaned"
+                    running_turns = [
+                        event
+                        for event in journal.events
+                        if event["event_type"] == "turn_started"
+                        and not any(
+                            later["turn_id"] == event["turn_id"]
+                            and later["event_type"] in {"message_completed", "turn_terminal", "contract_invalid"}
+                            for later in journal.events
+                            if later["event_id"] > event["event_id"]
+                        )
+                    ]
+                    last_turn = running_turns[-1] if running_turns else None
+                    case.recovery_notice = {
+                        "turn_id": last_turn["turn_id"] if last_turn else None,
+                        "session_id": (last_turn or {}).get("payload", {}).get("session_id"),
+                        "warning": "最后一小段流式诊断可能缺失，结果可能未知；仅保留最后 completed 业务内容",
+                    }
                 self.cases[case.case_id] = case
             except Exception:
                 continue
+
+    async def recover_orphans(self) -> None:
+        for case in self.cases.values():
+            if not case.recovery_notice:
+                continue
+            await case.journal.append(
+                "orphaned_recovered",
+                case.recovery_notice,
+                turn_id=case.recovery_notice.get("turn_id"),
+                status="orphaned",
+                durable=True,
+            )
+            await self._state(case)
+            case.recovery_notice = None
+
+    @staticmethod
+    def _transition_case(case: CaseRuntime, target: CaseStatus) -> None:
+        require_transition(case.status, target, CASE_TRANSITIONS)
+        case.status = target
 
     async def create_case(self, payload: dict) -> CaseRuntime:
         async with self._manager_lock:
@@ -172,7 +216,7 @@ class CaseManager:
             write_provenance(case_dir / "provenance.json", self.provenance)
             self.cases[case_id] = case
             await journal.append("case_created", meta, status="created", durable=True)
-            case.status = CaseStatus.RUNNING
+            self._transition_case(case, CaseStatus.RUNNING)
             await self._state(case)
             case.task = asyncio.create_task(self._run_case(case))
             return case
@@ -252,7 +296,7 @@ class CaseManager:
                         await self._wait_human(case, "代码否决非法交付")
                         return
                     case.final_lyric = case.lyrics[case.content_version].text
-                    case.status = CaseStatus.DELIVERED
+                    self._transition_case(case, CaseStatus.DELIVERED)
                     case.phase = "delivered"
                     await self._route(case, "supervisor", "delivery", "deliver", case.final_lyric)
                     await self._state(case)
@@ -263,9 +307,10 @@ class CaseManager:
             return
         except Exception as exc:
             await case.journal.append("runtime_error", {"summary": redact_text(str(exc))[:1000]}, status="failed", durable=True)
-            case.status = CaseStatus.FAILED
-            case.phase = "failed"
-            await self._state(case)
+            if case.status not in {CaseStatus.DELIVERED, CaseStatus.CANCELLED, CaseStatus.FAILED}:
+                self._transition_case(case, CaseStatus.FAILED)
+                case.phase = "failed"
+                await self._state(case)
 
     async def _supervisor(self, case: CaseRuntime, phase: str, business: str):
         review = case.review
@@ -281,7 +326,11 @@ class CaseManager:
             "content_version": case.content_version,
             "allowed_actions": actions,
             "allowed_lines": self._repair_lines(case),
-            "locked_lines": [n for n in range(1, 17) if n not in self._repair_lines(case)],
+            "locked_lines": (
+                [n for n in range(1, 17) if n not in self._repair_lines(case)]
+                if case.content_version and self._repair_lines(case)
+                else []
+            ),
             "latest_review_id": case.review_id,
         }
         result = await self._call_and_parse(case, "supervisor", supervisor_prompt(envelope, business))
@@ -336,6 +385,22 @@ class CaseManager:
             )
             result = await self._invoke_attempts(case, turn, session_id, task_prompt)
             case.current_role = case.active_turn_id = case.active_token = None
+            if case.status == CaseStatus.CANCELLED:
+                if turn.status == TurnStatus.RUNNING:
+                    turn.transition(TurnStatus.CANCELLED, token=token)
+                await case.journal.append(
+                    "turn_terminal",
+                    {
+                        "role": role,
+                        "attempt_status": result.attempt_status,
+                        "partial": result.final_text,
+                        "reason": "case_cancelled",
+                    },
+                    turn_id=turn_id,
+                    status="cancelled",
+                    durable=True,
+                )
+                return None
             if result.attempt_status != "succeeded":
                 target = TurnStatus.INCOMPLETE if result.attempt_status == "killed" else TurnStatus.ORPHANED if result.attempt_status == "ambiguous" else TurnStatus.FAILED
                 turn.transition(target, token=token)
@@ -382,7 +447,7 @@ class CaseManager:
 
     async def _wait_human(self, case: CaseRuntime, reason: str) -> None:
         if case.status == CaseStatus.RUNNING:
-            case.status = CaseStatus.WAITING_HUMAN
+            self._transition_case(case, CaseStatus.WAITING_HUMAN)
             case.phase = "waiting_human"
             await case.journal.append("waiting_human", {"reason": reason}, status="waiting_human", durable=True)
             await self._state(case)
@@ -394,6 +459,10 @@ class CaseManager:
     def _hard_failure_lines(validation: dict) -> list[int]:
         lines = set(validation.get("punctuation_lines", []))
         lines.update(hit["line"] for hit in validation.get("forbidden_word_hits", []))
+        if not validation.get("checks", {}).get("golden_line_only_at_9_and_13", True):
+            lines.update({9, 13})
+            lines.update(validation.get("gold_positions", []))
+            lines.update(validation.get("golden_line_occurrence_positions", []))
         duplicates = set(validation.get("duplicate_non_golden_lines", []))
         # Duplicate values are surfaced without positions by the legacy gate;
         # no safe local scope can be inferred from them.
@@ -410,10 +479,62 @@ class CaseManager:
         case = self.cases[case_id]
         if case.status in {CaseStatus.DELIVERED, CaseStatus.CANCELLED, CaseStatus.FAILED}:
             raise ValueError("Case 已处于终态")
-        await self.stop_current(case_id)
-        case.status = CaseStatus.CANCELLED
+        token = case.active_token
+        active_turn = case.turns.get(case.active_turn_id or "")
+        self._transition_case(case, CaseStatus.CANCELLED)
         case.phase = "cancelled"
+        if active_turn and active_turn.status == TurnStatus.RUNNING:
+            active_turn.transition(TurnStatus.CANCELLED, token=token)
+        if token:
+            await self.runner.stop(token)
         await self._state(case)
+
+    async def manual_continue(self, case_id: str, target: str, instruction: str) -> None:
+        case = self.cases[case_id]
+        if case.status != CaseStatus.WAITING_HUMAN:
+            raise ValueError("只有 waiting_human Case 可以人工继续")
+        if target not in {"supervisor", "generator", "reviewer"}:
+            raise ValueError("人工目标 Agent 无效")
+        instruction = normalize_text(
+            instruction, field_name="人工补充指令", max_bytes=8192
+        ).strip()
+        if not instruction:
+            raise ValueError("人工补充指令不能为空")
+        self._transition_case(case, CaseStatus.RUNNING)
+        case.phase = "manual_continue"
+        await case.journal.append(
+            "manual_continue",
+            {"target": target, "instruction": instruction, "parent_turn_id": case.active_turn_id},
+            status="running",
+            durable=True,
+        )
+        await self._state(case)
+        case.task = asyncio.create_task(self._manual_turn(case, target, instruction))
+
+    async def _manual_turn(self, case: CaseRuntime, target: str, instruction: str) -> None:
+        try:
+            if target == "generator":
+                prompt = self._generator_task(case, instruction)
+            elif target == "reviewer" and case.content_version:
+                prompt = instruction
+            elif target == "supervisor":
+                actions = ("ASK_HUMAN",)
+                prompt = supervisor_prompt(
+                    {
+                        "case_id": case.case_id,
+                        "phase": "manual",
+                        "content_version": case.content_version,
+                        "allowed_actions": actions,
+                    },
+                    instruction,
+                )
+            else:
+                await self._wait_human(case, "当前没有可供审核的歌词版本")
+                return
+            await self._call_and_parse(case, target, prompt)
+            await self._wait_human(case, "人工 Turn 已完成，请检查输出后决定后续动作")
+        except Exception as exc:
+            await self._wait_human(case, f"人工 Turn 失败：{redact_text(str(exc))[:500]}")
 
     def recent(self) -> list[dict]:
         return [case.public_state() for case in sorted(self.cases.values(), key=lambda c: c.case_id, reverse=True)[:10]]

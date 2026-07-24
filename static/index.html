@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Pi 歌曲生产泳道 Lite</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%233f6df6'/><text x='16' y='22' text-anchor='middle' font-size='18' fill='white'>P</text></svg>">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <p class="eyebrow">LOCAL · PI 0.81</p>
+      <h1>歌曲生产对话泳道 <span>Lite</span></h1>
+    </div>
+    <div class="top-status"><i id="liveDot"></i><span id="globalStatus">准备就绪</span></div>
+  </header>
+
+  <main>
+    <section class="composer panel">
+      <div class="section-title">
+        <div><p class="eyebrow">NEW CASE</p><h2>生产物料</h2></div>
+        <select id="preset"><option value="">手动输入</option></select>
+      </div>
+      <form id="caseForm">
+        <label class="wide">参考歌词 / 素材<textarea id="reference" rows="4" required></textarea></label>
+        <label>固定金句<input id="golden" required></label>
+        <label>风格要求<input id="style" value="山歌民歌"></label>
+        <label class="wide">补充要求<textarea id="requirements" rows="2"></textarea></label>
+        <label>禁用词<input id="forbidden"></label>
+        <label>自动返修轮数<select id="maxRepairs"><option>3</option><option>2</option></select></label>
+        <div class="actions wide">
+          <button class="primary" type="submit">开始真实生产</button>
+          <button id="stopBtn" type="button">停止当前 Agent</button>
+          <button id="cancelBtn" class="danger" type="button">结束整个任务</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="workspace">
+      <aside class="recent panel">
+        <p class="eyebrow">RECENT CASES</p>
+        <h2>最近任务</h2>
+        <div id="recentList" class="recent-list"></div>
+      </aside>
+
+      <section class="trace panel">
+        <div class="trace-head">
+          <div><p class="eyebrow">LIVE TRACE</p><h2 id="caseTitle">尚未选择 Case</h2></div>
+          <div class="trace-meta"><span id="versionChip">v0</span><span id="roundChip">0 次返修</span></div>
+        </div>
+        <div id="lanes" class="lanes">
+          <svg id="links" aria-hidden="true"><defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z"></path></marker></defs></svg>
+          <div class="lane" data-role="supervisor"><header><span class="agent-icon">总</span><div><h3>总控 Agent</h3><small>持久 Session</small></div><b class="agent-state">等待</b></header><div class="cards"></div></div>
+          <div class="lane" data-role="generator"><header><span class="agent-icon">生</span><div><h3>生成 Agent</h3><small>持久 Session</small></div><b class="agent-state">等待</b></header><div class="cards"></div></div>
+          <div class="lane" data-role="reviewer"><header><span class="agent-icon">审</span><div><h3>审核 Agent</h3><small>每版本冷 Session</small></div><b class="agent-state">等待</b></header><div class="cards"></div></div>
+        </div>
+        <form id="continueForm" class="continue-form">
+          <select id="continueTarget"><option value="supervisor">发送给总控</option><option value="generator">发送给生成</option><option value="reviewer">发送给审核</option></select>
+          <input id="continueInstruction" placeholder="waiting_human 时输入补充指令">
+          <button type="submit">人工继续</button>
+        </form>
+      </section>
+    </section>
+
+    <section class="delivery panel">
+      <div class="section-title"><div><p class="eyebrow">ARTIFACTS</p><h2>歌词版本与最终交付</h2></div><button id="copyBtn" type="button">复制最终歌词</button></div>
+      <div class="artifact-grid">
+        <div><h3>版本</h3><div id="versionTabs" class="tabs"></div><pre id="lyricView">尚无歌词版本</pre></div>
+        <div><h3>行级差异</h3><div id="diffView" class="diff empty">产生返修版本后显示</div></div>
+        <div class="final"><h3>最终交付</h3><pre id="finalLyric">等待总控交付</pre></div>
+      </div>
+    </section>
+  </main>
+  <div class="privacy">敏感本机诊断数据 · thinking 默认折叠 · 仅限 127.0.0.1</div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

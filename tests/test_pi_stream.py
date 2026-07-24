@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
+import stat
+import tempfile
+import asyncio
 import unittest
 from pathlib import Path
 
-from app.pi_stream import MAX_PI_EVENT_BYTES, PiEventParser
+from app.config import RoleProfile
+from app.pi_stream import MAX_PI_EVENT_BYTES, PiEventParser, PiStreamRunner
 
 
 FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "pi_events" / "probe_v0.81.1.jsonl"
@@ -55,6 +60,51 @@ class PiEventParserTests(unittest.TestCase):
         self.assertEqual(parser.final_text, "")
 
 
+class PiProcessGroupTests(unittest.IsolatedAsyncioTestCase):
+    async def test_stop_kills_the_whole_process_group(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            pid_file = root / "child.pid"
+            fake_pi = root / "fake-pi"
+            fake_pi.write_text(
+                "#!/usr/bin/env python3\n"
+                "import subprocess,time\n"
+                f"p=subprocess.Popen(['sleep','30']);open({str(pid_file)!r},'w').write(str(p.pid))\n"
+                "print('{\"type\":\"session\",\"version\":3,\"id\":\"fake\"}',flush=True)\n"
+                "time.sleep(30)\n",
+                encoding="utf-8",
+            )
+            fake_pi.chmod(fake_pi.stat().st_mode | stat.S_IXUSR)
+            runner = PiStreamRunner(str(fake_pi))
+            events = []
+
+            async def emit(kind, payload):
+                events.append((kind, payload))
+
+            task = asyncio.create_task(
+                runner.run(
+                    role="generator",
+                    role_profile=RoleProfile("x/y", "off", "lite-song-generator", True),
+                    session_dir=root / "sessions",
+                    session_id="fake",
+                    system_prompt="x",
+                    task_prompt="x",
+                    token="stop-token",
+                    emit=emit,
+                    timeout_seconds=20,
+                )
+            )
+            for _ in range(100):
+                if pid_file.exists():
+                    break
+                await asyncio.sleep(0.02)
+            child_pid = int(pid_file.read_text())
+            self.assertTrue(await runner.stop("stop-token"))
+            result = await task
+            self.assertEqual(result.attempt_status, "killed")
+            with self.assertRaises(ProcessLookupError):
+                os.kill(child_pid, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
-

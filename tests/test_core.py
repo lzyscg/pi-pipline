@@ -132,6 +132,14 @@ class ValidationTests(unittest.TestCase):
             },
         )
 
+    def test_golden_line_substring_outside_9_and_13_is_blocked(self):
+        lyric = canonicalize_lyric(
+            VALID_LYRIC.replace("阿哥隔岸唱山歌", f"{GOLDEN}你在哪里")
+        )
+        result = validate_canonical(lyric, GOLDEN)
+        self.assertFalse(result["pass"])
+        self.assertEqual(result["golden_line_occurrence_positions"], [4, 9, 13])
+
     def test_frozen_lines_are_code_owned(self):
         before = canonicalize_lyric(VALID_LYRIC)
         good = canonicalize_lyric(VALID_LYRIC.replace("阿哥隔岸唱山歌", "阿哥隔岸把歌唱"))
