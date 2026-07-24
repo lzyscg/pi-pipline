@@ -119,6 +119,10 @@ class ContractTests(unittest.TestCase):
             "### 审核结果\n- **结论：返修**\n- **问题行：6**\n"
             "- **范围：局部**\n- **证据：第6行语序不自然**"
         )
+        paragraph = parse_review_result(
+            "返修。问题行号：第11行（珠穆朗玛雪莲芳）。返修范围：局部（第11行）。\n"
+            "证据：雪莲芳属于生硬压缩，正常表达应为雪莲芬芳。"
+        )
         approved = parse_review_result("通过")
         self.assertEqual(supervisor.action, "SEND_GENERATOR")
         self.assertEqual(fenced.lyric.text, VALID_LYRIC)
@@ -126,6 +130,8 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(inline_evidence.affected_lines, (6,))
         self.assertEqual(chinese.scope, "LOCAL")
         self.assertEqual(markdown.affected_lines, (6,))
+        self.assertEqual(paragraph.affected_lines, (11,))
+        self.assertEqual(paragraph.scope, "LOCAL")
         self.assertEqual(approved.decision, "APPROVE")
 
     def test_json_business_results_are_normalized(self):

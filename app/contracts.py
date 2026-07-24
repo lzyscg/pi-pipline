@@ -377,7 +377,7 @@ def parse_review_result(raw: str) -> ReviewResult:
             continue
 
         match = re.fullmatch(
-            r"\s*(?:AFFECTED_LINES|问题行|受影响行)\s*[:：]\s*(.*?)\s*",
+            r"\s*(?:AFFECTED_LINES|问题行号?|受影响行)\s*[:：]\s*(.*?)\s*",
             surface,
             re.IGNORECASE,
         )
@@ -404,6 +404,44 @@ def parse_review_result(raw: str) -> ReviewResult:
             control_indexes.add(index)
             if match.group(1):
                 evidence_parts.append(match.group(1).strip())
+
+    natural_surface = _control_surface(cleaned)
+    if not decision_values:
+        match = re.match(
+            r"^\s*(APPROVE|PASS|REPAIR|通过|审核通过|可交付|返修|需返修|不通过|打回)"
+            r"(?=$|[\s，,。；;：:])",
+            natural_surface,
+            re.IGNORECASE,
+        )
+        natural_decision = _review_decision(match.group(1)) if match else None
+        if natural_decision:
+            decision_values.append(natural_decision)
+    if affected is None:
+        match = re.search(
+            r"(?:AFFECTED_LINES|问题行号?|受影响行)\s*[:：]\s*([^。；;\n]+)",
+            natural_surface,
+            re.IGNORECASE,
+        )
+        if match:
+            affected = _affected_lines(match.group(1))
+    if scope is None:
+        match = re.search(
+            r"(?:SCOPE|返修范围|范围)\s*[:：]\s*"
+            r"(NONE|LOCAL|STRUCTURAL|INPUT|无|局部|定点|结构性?|输入素材?|素材)",
+            natural_surface,
+            re.IGNORECASE,
+        )
+        if match:
+            scope = _review_scope(match.group(1))
+    if evidence_index is None:
+        match = re.search(
+            r"(?:EVIDENCE|证据|理由)\s*[:：]\s*(.+)$",
+            cleaned,
+            re.IGNORECASE | re.DOTALL,
+        )
+        if match:
+            evidence_parts = [match.group(1).strip()]
+            evidence_index = len(lines)
 
     decisions = set(decision_values)
     if len(decisions) > 1:
