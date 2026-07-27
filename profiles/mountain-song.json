@@ -3,23 +3,22 @@
   "name": "山歌民歌 4×4",
   "roles": {
     "supervisor": {
-      "model": "opencode-go/deepseek-v4-pro",
+      "model": "opencode/deepseek-v4-pro",
       "thinking": "high",
       "skill": "lite-song-supervisor",
       "persistent_session": true
     },
     "generator": {
-      "model": "opencode-go/deepseek-v4-flash",
+      "model": "opencode/deepseek-v4-flash",
       "thinking": "high",
       "skill": "lite-song-generator",
       "persistent_session": true
     },
     "reviewer": {
-      "model": "opencode-go/deepseek-v4-pro",
+      "model": "opencode/deepseek-v4-pro",
       "thinking": "high",
       "skill": "lite-song-reviewer",
       "persistent_session": false
     }
   }
 }
-
