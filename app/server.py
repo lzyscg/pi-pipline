@@ -5,14 +5,16 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import subprocess
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from .config import public_role_config
 from .orchestrator import CaseManager
 from .provenance import LITE_ROOT
 
@@ -23,13 +25,29 @@ def validate_bind_host(host: str) -> str:
     return host
 
 
-class CaseInput(BaseModel):
+class StrictInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class AgentRoleInput(StrictInput):
+    model: str = Field(min_length=3)
+    thinking: str = Field(min_length=2)
+
+
+class AgentConfigInput(StrictInput):
+    supervisor: AgentRoleInput
+    generator: AgentRoleInput
+    reviewer: AgentRoleInput
+
+
+class CaseInput(StrictInput):
     reference_lyrics: str = Field(min_length=1)
     golden_line: str = Field(min_length=1)
     style: str = "山歌民歌"
     requirements: str = ""
     forbidden_words: str = ""
     max_repairs: int = 3
+    agent_config: AgentConfigInput | None = None
 
 
 class ContinueInput(BaseModel):
@@ -69,11 +87,24 @@ async def recent_cases(request: Request):
     return manager(request).recent()
 
 
+@app.get("/api/models")
+async def models(request: Request):
+    mgr = manager(request)
+    try:
+        catalog = await asyncio.to_thread(mgr.model_catalog.snapshot)
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
+        raise HTTPException(503, "Pi 模型目录不可用") from exc
+    return {
+        **catalog,
+        "defaults": public_role_config(mgr.profile.roles),
+    }
+
+
 @app.post("/api/cases")
 async def create_case(payload: CaseInput, request: Request):
     try:
         case = await manager(request).create_case(payload.model_dump())
-    except ValueError as exc:
+    except (ValueError, RuntimeError) as exc:
         raise HTTPException(409, str(exc)) from exc
     return case.public_state()
 

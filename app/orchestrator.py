@@ -662,6 +662,7 @@ class CaseManager:
         else:
             session_id = case.session_ids[role]
         async with case.role_locks[role]:
+            role_profile = case.role_profiles[role]
             turn_id = f"turn-{uuid.uuid4().hex[:10]}"
             token = secrets.token_urlsafe(16)
             turn = TurnState(turn_id, role, token)
@@ -672,7 +673,15 @@ class CaseManager:
             await case.journal.append("turn_started", {"role": role, "session_id": session_id}, turn_id=turn_id, status="running")
             await case.journal.append(
                 "actual_model_input",
-                {"role": role, "system_prompt": redact_text(SYSTEM_PROMPTS[role]), "task_prompt": redact_text(task_prompt), "skill": self.profile.roles[role].skill, "session_id": session_id},
+                {
+                    "role": role,
+                    "system_prompt": redact_text(SYSTEM_PROMPTS[role]),
+                    "task_prompt": redact_text(task_prompt),
+                    "skill": role_profile.skill,
+                    "model": role_profile.model,
+                    "thinking": role_profile.thinking,
+                    "session_id": session_id,
+                },
                 turn_id=turn_id,
                 content_version=case.content_version,
             )
@@ -738,7 +747,7 @@ class CaseManager:
                 await case.journal.append(kind, payload, turn_id=turn.turn_id, attempt_id=attempt_id, content_version=case.content_version)
             result = await self.runner.run(
                 role=turn.role,
-                role_profile=self.profile.roles[turn.role],
+                role_profile=case.role_profiles[turn.role],
                 session_dir=case.case_dir / "pi_sessions",
                 session_id=session_id,
                 system_prompt=SYSTEM_PROMPTS[turn.role],

@@ -164,6 +164,38 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             )
             self.assertEqual(restored.public_state()["agent_config_source"], "case")
 
+    async def test_invocation_uses_case_profile_and_records_model_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = CaseManager(directory, model_catalog=StaticCatalog())
+            runner = BlockingRunner()
+            manager.runner = runner
+            case = await manager.create_case(
+                {**self.payload(), "agent_config": VALID_AGENT_SELECTION}
+            )
+            await runner.started.wait()
+
+            call = runner.calls["supervisor"][0]
+            actual = next(
+                event
+                for event in case.journal.events
+                if event["event_type"] == "actual_model_input"
+            )
+            self.assertEqual(
+                call["role_profile"].model,
+                VALID_AGENT_SELECTION["supervisor"]["model"],
+            )
+            self.assertEqual(
+                actual["payload"]["model"],
+                VALID_AGENT_SELECTION["supervisor"]["model"],
+            )
+            self.assertEqual(
+                actual["payload"]["thinking"],
+                VALID_AGENT_SELECTION["supervisor"]["thinking"],
+            )
+
+            await manager.cancel_case(case.case_id)
+            await case.task
+
     async def test_direct_natural_business_outputs_deliver(self):
         with tempfile.TemporaryDirectory() as directory:
             manager = CaseManager(directory)
