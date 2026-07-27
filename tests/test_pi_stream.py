@@ -59,6 +59,39 @@ class PiEventParserTests(unittest.TestCase):
         )
         self.assertEqual(parser.final_text, "")
 
+    def test_assistant_message_start_records_actual_provider_and_model(self):
+        parser = PiEventParser()
+
+        events = parser.feed_line(
+            json.dumps(
+                {
+                    "type": "message_start",
+                    "message": {
+                        "role": "assistant",
+                        "api": "openai-completions",
+                        "provider": "opencode",
+                        "model": "deepseek-v4-flash",
+                        "content": [],
+                    },
+                }
+            )
+        )
+
+        self.assertEqual(
+            [(event.kind, event.payload) for event in events],
+            [
+                (
+                    "pi_model",
+                    {
+                        "provider": "opencode",
+                        "model": "deepseek-v4-flash",
+                        "model_id": "opencode/deepseek-v4-flash",
+                        "api": "openai-completions",
+                    },
+                )
+            ],
+        )
+
 
 class PiProcessGroupTests(unittest.IsolatedAsyncioTestCase):
     async def test_stop_kills_the_whole_process_group(self):

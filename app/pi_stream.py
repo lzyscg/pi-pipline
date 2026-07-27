@@ -171,6 +171,23 @@ class PiEventParser:
             "tool_execution_start",
             "tool_execution_end",
         }:
+            if event_type == "message_start":
+                message = event.get("message")
+                if isinstance(message, dict) and message.get("role") == "assistant":
+                    provider = str(message.get("provider", "")).strip()
+                    model = str(message.get("model", "")).strip()
+                    if provider and model:
+                        return [
+                            NormalizedPiEvent(
+                                "pi_model",
+                                {
+                                    "provider": provider,
+                                    "model": model,
+                                    "model_id": f"{provider}/{model}",
+                                    "api": str(message.get("api", "")),
+                                },
+                            )
+                        ]
             payload = {"type": event_type}
             if event_type.startswith("tool_"):
                 payload.update(
@@ -409,4 +426,3 @@ class PiStreamRunner:
 
 async def _empty_bytes() -> bytes:
     return b""
-
