@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .orchestrator import CaseManager
-from .provenance import LITE_ROOT, REPO_ROOT
+from .provenance import LITE_ROOT
 
 
 def validate_bind_host(host: str) -> str:
@@ -162,16 +162,15 @@ async def continue_case(case_id: str, payload: ContinueInput, request: Request):
 
 @app.get("/api/ph-cases")
 async def ph_cases():
-    root = REPO_ROOT / "shan-song-skill-iteration" / "experiments" / "2026-07-16_v1.0.0_substyle_showcase" / "inputs"
-    result = []
-    for case_id in ("PH-009", "PH-046", "PH-094", "PH-168"):
-        raw = json.loads((root / f"{case_id}.json").read_text(encoding="utf-8"))
-        result.append(
-            {
-                "id": case_id,
-                "reference_lyrics": raw["reference_lyrics"],
-                "golden_line": raw.get("explicit_golden_line") or raw["target_title_or_golden_line"],
-                "style": raw.get("lyric_style", "山歌民歌"),
-            }
-        )
+    fixture_path = LITE_ROOT / "fixtures" / "ph_cases.json"
+    try:
+        result = json.loads(fixture_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HTTPException(500, "内置测试案例不可用") from exc
+    if not isinstance(result, list) or not all(
+        isinstance(item, dict)
+        and all(isinstance(item.get(field), str) and item[field].strip() for field in ("id", "reference_lyrics", "golden_line", "style"))
+        for item in result
+    ):
+        raise HTTPException(500, "内置测试案例格式无效")
     return result

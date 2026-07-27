@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import tempfile
 import unittest
 from pathlib import Path
@@ -24,6 +25,7 @@ from app.state import (
     allowed_actions,
 )
 from app.validation_adapter import validate_canonical, validate_local_repair
+from app.server import ph_cases
 
 
 GOLDEN = "我的那个心上人"
@@ -46,6 +48,13 @@ VALID_LYRIC = """山风吹过青石坡
 今夜歌声作桥梁
 明朝同走青石路
 山花开满旧村庄"""
+
+
+class PresetTests(unittest.TestCase):
+    def test_builtin_ph_cases_are_available(self):
+        cases = asyncio.run(ph_cases())
+        self.assertEqual([case["id"] for case in cases], ["PH-009", "PH-046", "PH-094", "PH-168"])
+        self.assertTrue(all(case["reference_lyrics"] and case["golden_line"] for case in cases))
 
 
 class CanonicalTests(unittest.TestCase):
