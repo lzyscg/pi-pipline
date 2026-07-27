@@ -12,7 +12,13 @@ from pathlib import Path
 from typing import Any
 
 from .canonical import CanonicalLyric, normalize_golden_line, normalize_text
-from .config import LiteProfile, load_profile
+from .config import (
+    LiteProfile,
+    RoleProfile,
+    load_profile,
+    public_role_config,
+    role_profiles_from_selection,
+)
 from .contracts import (
     ContractError,
     GenerationResult,
@@ -22,6 +28,7 @@ from .contracts import (
     parse_supervisor_result,
 )
 from .journal import CaseJournal
+from .model_catalog import PiModelCatalog
 from .pi_stream import PiRunResult, PiStreamRunner
 from .prompts import SYSTEM_PROMPTS, generator_prompt, reviewer_prompt, supervisor_prompt
 from .provenance import LITE_ROOT, collect_provenance, ensure_private_runtime_dir, write_provenance
@@ -48,6 +55,8 @@ class CaseRuntime:
     input: dict
     max_repairs: int
     journal: CaseJournal
+    role_profiles: dict[str, RoleProfile]
+    role_config_source: str
     status: CaseStatus = CaseStatus.CREATED
     phase: str = "initial"
     content_version: int = 0
@@ -88,6 +97,8 @@ class CaseRuntime:
             "max_repairs": self.max_repairs,
             "current_role": self.current_role,
             "session_ids": self.session_ids,
+            "agent_config": public_role_config(self.role_profiles),
+            "agent_config_source": self.role_config_source,
             "hard_validation": self.hard_validation,
             "review": asdict(self.review) if self.review else None,
             "blocking": self._blocking_state(),
@@ -163,11 +174,17 @@ class CaseRuntime:
 
 
 class CaseManager:
-    def __init__(self, data_dir: str | None = None) -> None:
+    def __init__(
+        self,
+        data_dir: str | None = None,
+        *,
+        model_catalog: PiModelCatalog | None = None,
+    ) -> None:
         self.root = ensure_private_runtime_dir(data_dir)
         self.profile_path = LITE_ROOT / "profiles" / "mountain-song.json"
         self.profile: LiteProfile = load_profile(self.profile_path)
         self.provenance = collect_provenance(self.profile_path, self.profile)
+        self.model_catalog = model_catalog or PiModelCatalog()
         self.runner = PiStreamRunner()
         self.cases: dict[str, CaseRuntime] = {}
         self._manager_lock = asyncio.Lock()
@@ -183,12 +200,20 @@ class CaseManager:
                 journal = CaseJournal(case_dir, raw["case_id"])
                 state_events = [e for e in journal.events if e["event_type"] == "case_state"]
                 state = state_events[-1]["payload"] if state_events else {}
+                role_profiles, role_config_source = role_profiles_from_selection(
+                    self.profile,
+                    raw.get("agent_config"),
+                    None,
+                    require_available=False,
+                )
                 case = CaseRuntime(
                     case_id=raw["case_id"],
                     case_dir=case_dir,
                     input=raw["input"],
                     max_repairs=raw["max_repairs"],
                     journal=journal,
+                    role_profiles=role_profiles,
+                    role_config_source=raw.get("agent_config_source", role_config_source),
                     status=CaseStatus(state.get("status", "failed")),
                     phase=state.get("phase", "waiting_human"),
                     content_version=state.get("content_version", 0),
@@ -265,6 +290,13 @@ class CaseManager:
         async with self._manager_lock:
             if any(c.status == CaseStatus.RUNNING for c in self.cases.values()):
                 raise ValueError("Lite 同时只允许运行一个 Case")
+            selection = payload.get("agent_config")
+            role_profiles, role_config_source = role_profiles_from_selection(
+                self.profile,
+                selection,
+                self.model_catalog.snapshot() if selection is not None else None,
+                require_available=selection is not None,
+            )
             input_data = {
                 "reference_lyrics": normalize_text(
                     str(payload.get("reference_lyrics", "")),
@@ -299,15 +331,33 @@ class CaseManager:
             (case_dir / "lyrics").mkdir(mode=0o700)
             (case_dir / "pi_sessions").mkdir(mode=0o700)
             journal = CaseJournal(case_dir, case_id)
-            case = CaseRuntime(case_id, case_dir, input_data, max_repairs, journal)
+            case = CaseRuntime(
+                case_id=case_id,
+                case_dir=case_dir,
+                input=input_data,
+                max_repairs=max_repairs,
+                journal=journal,
+                role_profiles=role_profiles,
+                role_config_source=role_config_source,
+            )
             case.session_ids = {
                 "supervisor": f"{case_id}__supervisor",
                 "generator": f"{case_id}__generator",
             }
-            meta = {"case_id": case_id, "input": input_data, "max_repairs": max_repairs}
+            agent_config = public_role_config(role_profiles)
+            meta = {
+                "case_id": case_id,
+                "input": input_data,
+                "max_repairs": max_repairs,
+                "agent_config": agent_config,
+                "agent_config_source": role_config_source,
+            }
             (case_dir / "input.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
             (case_dir / "input.json").chmod(0o600)
-            write_provenance(case_dir / "provenance.json", self.provenance)
+            write_provenance(
+                case_dir / "provenance.json",
+                {**self.provenance, "agent_config": agent_config},
+            )
             self.cases[case_id] = case
             await journal.append("case_created", meta, status="created", durable=True)
             self._transition_case(case, CaseStatus.RUNNING)

@@ -36,6 +36,36 @@ V1 = """山风吹过青石坡
 V2 = V1.replace("心里头想那个我的郎", "心里想起我的情郎")
 HARD_BAD = V1.replace(GOLDEN, f"{GOLDEN}呀")
 DUPLICATE_BAD = V2.replace("山花开满旧村庄", "木槌声声催日落")
+VALID_AGENT_SELECTION = {
+    "supervisor": {"model": "opencode/deepseek-v4-flash", "thinking": "medium"},
+    "generator": {"model": "opencode/deepseek-v4-pro", "thinking": "high"},
+    "reviewer": {"model": "opencode/deepseek-v4-flash", "thinking": "low"},
+}
+MODEL_CATALOG = {
+    "models": [
+        {
+            "provider": "opencode",
+            "model": "deepseek-v4-pro",
+            "model_id": "opencode/deepseek-v4-pro",
+            "thinking": True,
+            "configured": True,
+        },
+        {
+            "provider": "opencode",
+            "model": "deepseek-v4-flash",
+            "model_id": "opencode/deepseek-v4-flash",
+            "thinking": True,
+            "configured": True,
+        },
+    ],
+    "configured_providers": ["opencode"],
+    "thinking_levels": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+}
+
+
+class StaticCatalog:
+    def snapshot(self):
+        return MODEL_CATALOG
 
 
 def sup(action: str, message: str = "继续") -> str:
@@ -103,6 +133,36 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             "forbidden_words": "",
             "max_repairs": 3,
         }
+
+    async def test_case_persists_and_restores_role_selection(self):
+        with tempfile.TemporaryDirectory() as directory:
+            manager = CaseManager(directory, model_catalog=StaticCatalog())
+            runner = BlockingRunner()
+            manager.runner = runner
+            case = await manager.create_case(
+                {**self.payload(), "agent_config": VALID_AGENT_SELECTION}
+            )
+            await runner.started.wait()
+            state = case.public_state()
+            stored = json.loads((case.case_dir / "input.json").read_text(encoding="utf-8"))
+            provenance = json.loads(
+                (case.case_dir / "provenance.json").read_text(encoding="utf-8")
+            )
+
+            self.assertEqual(state["agent_config"], VALID_AGENT_SELECTION)
+            self.assertEqual(state["agent_config_source"], "case")
+            self.assertEqual(stored["agent_config"], VALID_AGENT_SELECTION)
+            self.assertEqual(provenance["agent_config"], VALID_AGENT_SELECTION)
+
+            await manager.cancel_case(case.case_id)
+            await case.task
+            reloaded = CaseManager(directory, model_catalog=StaticCatalog())
+            restored = reloaded.cases[case.case_id]
+            self.assertEqual(
+                restored.role_profiles["generator"].model,
+                "opencode/deepseek-v4-pro",
+            )
+            self.assertEqual(restored.public_state()["agent_config_source"], "case")
 
     async def test_direct_natural_business_outputs_deliver(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -392,6 +452,11 @@ class OrchestratorTests(unittest.IsolatedAsyncioTestCase):
             case = recovered.cases[case_id]
             self.assertEqual(case.status.value, "waiting_human")
             self.assertEqual(case.phase, "orphaned")
+            self.assertEqual(case.public_state()["agent_config_source"], "default")
+            self.assertEqual(
+                case.public_state()["agent_config"]["generator"]["model"],
+                "opencode/deepseek-v4-flash",
+            )
             await recovered.recover_orphans()
             notice = [
                 event for event in case.journal.events

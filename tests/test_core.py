@@ -17,6 +17,12 @@ from app.contracts import (
     parse_review_result,
     parse_supervisor_result,
 )
+from app.config import (
+    LiteProfile,
+    RoleProfile,
+    public_role_config,
+    role_profiles_from_selection,
+)
 from app.journal import CaseJournal
 from app.redaction import redact_text
 from app.state import (
@@ -49,12 +55,110 @@ VALID_LYRIC = """山风吹过青石坡
 明朝同走青石路
 山花开满旧村庄"""
 
+PROFILE = LiteProfile(
+    profile_version="test-v1",
+    name="test",
+    roles={
+        "supervisor": RoleProfile("opencode/deepseek-v4-pro", "high", "lite-song-supervisor", True),
+        "generator": RoleProfile("opencode/deepseek-v4-flash", "high", "lite-song-generator", True),
+        "reviewer": RoleProfile("opencode/deepseek-v4-pro", "high", "lite-song-reviewer", False),
+    },
+)
+CATALOG = {
+    "models": [
+        {
+            "provider": "opencode",
+            "model": "deepseek-v4-pro",
+            "model_id": "opencode/deepseek-v4-pro",
+            "thinking": True,
+            "configured": True,
+        },
+        {
+            "provider": "opencode",
+            "model": "deepseek-v4-flash",
+            "model_id": "opencode/deepseek-v4-flash",
+            "thinking": True,
+            "configured": True,
+        },
+        {
+            "provider": "anthropic",
+            "model": "claude-haiku",
+            "model_id": "anthropic/claude-haiku",
+            "thinking": False,
+            "configured": False,
+        },
+    ],
+    "thinking_levels": ["off", "minimal", "low", "medium", "high", "xhigh", "max"],
+}
+VALID_AGENT_SELECTION = {
+    "supervisor": {"model": "opencode/deepseek-v4-flash", "thinking": "medium"},
+    "generator": {"model": "opencode/deepseek-v4-pro", "thinking": "high"},
+    "reviewer": {"model": "opencode/deepseek-v4-flash", "thinking": "low"},
+}
+
 
 class PresetTests(unittest.TestCase):
     def test_builtin_ph_cases_are_available(self):
         cases = asyncio.run(ph_cases())
         self.assertEqual([case["id"] for case in cases], ["PH-009", "PH-046", "PH-094", "PH-168"])
         self.assertTrue(all(case["reference_lyrics"] and case["golden_line"] for case in cases))
+
+
+class RoleProfileSelectionTests(unittest.TestCase):
+    def test_selection_requires_exact_roles(self):
+        with self.assertRaisesRegex(RuntimeError, "三个 Agent"):
+            role_profiles_from_selection(
+                PROFILE,
+                {"supervisor": VALID_AGENT_SELECTION["supervisor"]},
+                CATALOG,
+                require_available=True,
+            )
+
+    def test_selection_rejects_unknown_or_unconfigured_model(self):
+        unknown = {
+            **VALID_AGENT_SELECTION,
+            "reviewer": {"model": "missing/unknown", "thinking": "off"},
+        }
+        with self.assertRaisesRegex(RuntimeError, "不可用"):
+            role_profiles_from_selection(PROFILE, unknown, CATALOG, require_available=True)
+
+        unavailable = {
+            **VALID_AGENT_SELECTION,
+            "reviewer": {"model": "anthropic/claude-haiku", "thinking": "off"},
+        }
+        with self.assertRaisesRegex(RuntimeError, "未配置"):
+            role_profiles_from_selection(PROFILE, unavailable, CATALOG, require_available=True)
+
+    def test_selection_only_overrides_model_and_thinking(self):
+        profiles, source = role_profiles_from_selection(
+            PROFILE,
+            VALID_AGENT_SELECTION,
+            CATALOG,
+            require_available=True,
+        )
+
+        self.assertEqual(source, "case")
+        self.assertEqual(profiles["generator"].model, "opencode/deepseek-v4-pro")
+        self.assertEqual(profiles["generator"].thinking, "high")
+        self.assertEqual(profiles["generator"].skill, "lite-song-generator")
+        self.assertTrue(profiles["generator"].persistent_session)
+        self.assertFalse(profiles["reviewer"].persistent_session)
+
+    def test_missing_selection_clones_default_profile(self):
+        profiles, source = role_profiles_from_selection(
+            PROFILE,
+            None,
+            None,
+            require_available=False,
+        )
+
+        self.assertEqual(source, "default")
+        self.assertIsNot(profiles, PROFILE.roles)
+        self.assertEqual(public_role_config(profiles), {
+            "supervisor": {"model": "opencode/deepseek-v4-pro", "thinking": "high"},
+            "generator": {"model": "opencode/deepseek-v4-flash", "thinking": "high"},
+            "reviewer": {"model": "opencode/deepseek-v4-pro", "thinking": "high"},
+        })
 
 
 class CanonicalTests(unittest.TestCase):
