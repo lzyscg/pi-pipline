@@ -5,10 +5,11 @@ const state = {
   lyrics: {},
   eventSource: null,
   ph: [],
+  modelCatalog: null,
   renderQueued: false,
 };
 
-const roles = ["supervisor", "generator", "reviewer"];
+const roles = ModelConfig.roles;
 const roleNames = {
   supervisor: "总控",
   generator: "生成",
@@ -32,9 +33,25 @@ async function api(url, options = {}) {
 }
 
 async function boot() {
-  state.ph = await api("/api/ph-cases");
-  for (const item of state.ph) {
-    $("#preset").insertAdjacentHTML("beforeend", `<option>${esc(item.id)}</option>`);
+  const [phResult, modelResult] = await Promise.allSettled([
+    api("/api/ph-cases"),
+    api("/api/models"),
+  ]);
+  if (phResult.status === "fulfilled") {
+    state.ph = phResult.value;
+    for (const item of state.ph) {
+      $("#preset").insertAdjacentHTML("beforeend", `<option>${esc(item.id)}</option>`);
+    }
+  }
+  if (modelResult.status === "fulfilled") {
+    state.modelCatalog = modelResult.value;
+    try {
+      initModelControls();
+    } catch (error) {
+      showModelCatalogError(error.message);
+    }
+  } else {
+    showModelCatalogError("无法读取 Pi 模型目录，请检查 Pi 配置后刷新页面");
   }
   $("#preset").onchange = loadPreset;
   $("#caseForm").onsubmit = createCase;
@@ -44,6 +61,70 @@ async function boot() {
   $("#copyBtn").onclick = () => navigator.clipboard.writeText($("#finalLyric").textContent);
   window.addEventListener("resize", scheduleTimelineRender);
   await refreshRecent();
+}
+
+function initModelControls() {
+  const providers = ModelConfig.providers(state.modelCatalog);
+  if (!providers.length) throw new Error("Pi 尚未配置可用的模型提供商");
+  for (const role of roles) {
+    const providerSelect = $(`#${role}Provider`);
+    providerSelect.innerHTML = providers
+      .map(provider => `<option value="${esc(provider)}">${esc(provider)}</option>`)
+      .join("");
+    const defaults = state.modelCatalog.defaults[role];
+    const defaultProvider = defaults.model.split("/", 1)[0];
+    providerSelect.value = providers.includes(defaultProvider) ? defaultProvider : providers[0];
+    providerSelect.disabled = false;
+    providerSelect.onchange = () => refreshRoleModels(role);
+    $(`#${role}Model`).onchange = () => refreshRoleThinking(role);
+    refreshRoleModels(role, defaults.model, defaults.thinking);
+  }
+  $("#startBtn").disabled = false;
+}
+
+function refreshRoleModels(role, preferredModel = "", preferredThinking = "") {
+  const provider = $(`#${role}Provider`).value;
+  const options = ModelConfig.modelsForProvider(state.modelCatalog, provider);
+  if (!options.length) throw new Error(`${provider} 没有可用模型`);
+  const modelSelect = $(`#${role}Model`);
+  modelSelect.innerHTML = options
+    .map(item => `<option value="${esc(item.model_id)}">${esc(item.model)}</option>`)
+    .join("");
+  modelSelect.value = options.some(item => item.model_id === preferredModel)
+    ? preferredModel
+    : options[0].model_id;
+  modelSelect.disabled = false;
+  refreshRoleThinking(role, preferredThinking);
+}
+
+function refreshRoleThinking(role, preferredThinking = "") {
+  const levels = ModelConfig.thinkingLevelsForModel(
+    state.modelCatalog,
+    $(`#${role}Model`).value,
+  );
+  const thinkingSelect = $(`#${role}Thinking`);
+  thinkingSelect.innerHTML = levels
+    .map(level => `<option value="${esc(level)}">${esc(level)}</option>`)
+    .join("");
+  thinkingSelect.value = levels.includes(preferredThinking) ? preferredThinking : levels[0];
+  thinkingSelect.disabled = false;
+}
+
+function showModelCatalogError(message) {
+  const error = $("#modelCatalogError");
+  error.hidden = false;
+  error.textContent = message;
+  $("#startBtn").disabled = true;
+}
+
+function selectedAgentConfig() {
+  return ModelConfig.agentConfig(Object.fromEntries(roles.map(role => [
+    role,
+    {
+      model: $(`#${role}Model`).value,
+      thinking: $(`#${role}Thinking`).value,
+    },
+  ])));
 }
 
 function loadPreset() {
@@ -66,6 +147,7 @@ async function createCase(event) {
         requirements: $("#requirements").value,
         forbidden_words: $("#forbidden").value,
         max_repairs: +$("#maxRepairs").value,
+        agent_config: selectedAgentConfig(),
       }),
     });
     document.querySelector(".composer").open = false;
@@ -185,9 +267,17 @@ function renderState(info) {
   $("#turnChip").textContent = `${info.turn_count || countTurns()} 个 Agent 轮次`;
   $("#roundChip").textContent = `${info.repair_count} 次返修`;
   document.querySelectorAll(".lane-head").forEach(element => {
-    const active = element.dataset.role === info.current_role;
+    const role = element.dataset.role;
+    const active = role === info.current_role;
     element.classList.toggle("running", active);
     element.querySelector(".agent-state").textContent = active ? "运行中" : "等待";
+    const modelLabel = ModelConfig.laneLabel(
+      info.agent_config?.[role],
+      info.agent_config_source,
+    );
+    const modelElement = element.querySelector(".agent-model");
+    modelElement.textContent = modelLabel;
+    modelElement.title = modelLabel;
   });
   state.lyrics = info.lyrics || state.lyrics;
   renderBlocking(info);

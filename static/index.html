@@ -36,8 +36,35 @@
           <label class="wide">补充要求<textarea id="requirements" rows="2"></textarea></label>
           <label>禁用词<input id="forbidden"></label>
           <label>自动返修轮数<select id="maxRepairs"><option>3</option><option>2</option></select></label>
+          <fieldset id="agentModelConfig" class="agent-config wide">
+            <legend>
+              <span>Agent 模型配置</span>
+              <small>创建任务时锁定，运行中不可修改</small>
+            </legend>
+            <div id="modelCatalogError" class="model-catalog-error" hidden></div>
+            <div class="agent-config-grid">
+              <article class="agent-config-card" data-role="supervisor">
+                <div><b>总控 Agent</b><small>Case 持久 Session</small></div>
+                <label>提供商<select id="supervisorProvider" disabled></select></label>
+                <label>模型<select id="supervisorModel" disabled></select></label>
+                <label>Thinking<select id="supervisorThinking" disabled></select></label>
+              </article>
+              <article class="agent-config-card" data-role="generator">
+                <div><b>生成 Agent</b><small>Case 持久 Session</small></div>
+                <label>提供商<select id="generatorProvider" disabled></select></label>
+                <label>模型<select id="generatorModel" disabled></select></label>
+                <label>Thinking<select id="generatorThinking" disabled></select></label>
+              </article>
+              <article class="agent-config-card" data-role="reviewer">
+                <div><b>审核 Agent</b><small>每版本冷 Session</small></div>
+                <label>提供商<select id="reviewerProvider" disabled></select></label>
+                <label>模型<select id="reviewerModel" disabled></select></label>
+                <label>Thinking<select id="reviewerThinking" disabled></select></label>
+              </article>
+            </div>
+          </fieldset>
           <div class="actions wide">
-            <button class="primary" type="submit">开始真实生产</button>
+            <button id="startBtn" class="primary" type="submit" disabled>开始真实生产</button>
             <button id="stopBtn" type="button">停止当前 Agent</button>
             <button id="cancelBtn" class="danger" type="button">结束整个任务</button>
           </div>
@@ -83,17 +110,17 @@
           <div class="lane-heads">
             <div class="lane-head" data-role="supervisor">
               <span class="agent-icon">总</span>
-              <div><h3>总控 Agent</h3><small>Case 持久 Session</small></div>
+              <div class="agent-meta"><h3>总控 Agent</h3><small>Case 持久 Session</small><small class="agent-model">等待 Case 配置</small></div>
               <b class="agent-state">等待</b>
             </div>
             <div class="lane-head" data-role="generator">
               <span class="agent-icon">生</span>
-              <div><h3>生成 Agent</h3><small>Case 持久 Session</small></div>
+              <div class="agent-meta"><h3>生成 Agent</h3><small>Case 持久 Session</small><small class="agent-model">等待 Case 配置</small></div>
               <b class="agent-state">等待</b>
             </div>
             <div class="lane-head" data-role="reviewer">
               <span class="agent-icon">审</span>
-              <div><h3>审核 Agent</h3><small>每版本冷 Session</small></div>
+              <div class="agent-meta"><h3>审核 Agent</h3><small>每版本冷 Session</small><small class="agent-model">等待 Case 配置</small></div>
               <b class="agent-state">等待</b>
             </div>
           </div>
@@ -139,6 +166,7 @@
   </main>
 
   <footer class="privacy">thinking 为敏感本机诊断数据，默认折叠 · 服务仅限 127.0.0.1</footer>
+  <script src="/static/model-config.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
